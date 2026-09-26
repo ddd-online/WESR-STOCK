@@ -6,6 +6,10 @@
 #include "adc_bsp.h"
 #include "user_config.h"
 #include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <unistd.h>
+#include <sys/select.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -58,7 +62,8 @@ extern "C" void Board_Init(void)
 
 extern "C" I2cMasterBus *Board_I2c(void) { return s_i2c; }
 
-/* 半分辨率 ASCII dump：'#' = 黑（该 2×2 块里至少 2 个黑点），'.' = 白 */
+/* 半分辨率 ASCII dump：'#' = 黑（该 2×2 块里至少 2 个黑点），'.' = 白。
+   120 行 × 200 列，够看版式；要看字体细节用 Board_DumpFbFull()。 */
 extern "C" void Board_DumpFb(void)
 {
     if (!s_fb) { printf("FB-BEGIN\n(no buffer)\nFB-END\n"); return; }
@@ -77,6 +82,37 @@ extern "C" void Board_DumpFb(void)
         }
         line[FB_W / 2] = 0;
         printf("%s\n", line);
+        vTaskDelay(1);          /* 让出 CPU：串口写是阻塞的，不让 IDLE 会触发任务看门狗 */
     }
     printf("FB-END\n");
+}
+
+/* 全分辨率 dump（1 字符 = 1 像素，200 行×400 列 ≈ 120KB，串口约 10 秒）：
+   按 'd' 键触发；用来核对文字/斜纹这类细节。 */
+extern "C" void Board_DumpFbFull(void)
+{
+    if (!s_fb) { printf("FB-BEGIN\n(no buffer)\nFB-END\n"); return; }
+    printf("FB-BEGIN-FULL %dx%d\n", FB_W, FB_H);
+    for (int y = 0; y < FB_H; y++) {
+        char line[FB_W + 1];
+        for (int x = 0; x < FB_W; x++) {
+            line[x] = (s_fb[y * FB_STRIDE + (x >> 3)] & (0x80u >> (x & 7))) ? '#' : '.';
+        }
+        line[FB_W] = 0;
+        printf("%s\n", line);
+        vTaskDelay(1);          /* 同上：全分辨率 300 行，每行让出一次 */
+    }
+    printf("FB-END\n");
+}
+
+/* 串口有字节进来时返回它（不阻塞），没有返回 -1 */
+extern "C" int Board_PollKey(void)
+{
+    fd_set r;
+    struct timeval tv = { 0, 0 };
+    FD_ZERO(&r);
+    FD_SET(STDIN_FILENO, &r);
+    if (select(STDIN_FILENO + 1, &r, NULL, NULL, &tv) <= 0) return -1;
+    int c = getchar();
+    return (c == EOF) ? -1 : c;
 }

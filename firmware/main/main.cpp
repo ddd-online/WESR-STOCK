@@ -27,9 +27,21 @@ extern "C" void app_main(void)
     }
     ESP_LOGI("wesr", "ui up, version %s", "0.1.0");
 
-    /* 无屏验证通道：每隔 20 秒把显存 dump 成 ASCII 到串口（用 idf.py monitor 回读） */
+    /* 无屏验证通道：
+       - 每 20 秒半分辨率 dump 一次（看版式）
+       - 串口收到 'd' 时全分辨率 dump 一次（看文字/斜纹细节） */
+    uint32_t last_dump_ms = 0;
+    uint32_t dump_no = 0;
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(20000));
-        Board_DumpFb();
+        int c = Board_PollKey();
+        if (c == 'd' || c == 'D') Board_DumpFbFull();
+        uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        if (now_ms - last_dump_ms >= 20000) {
+            last_dump_ms = now_ms;
+            /* 每第 6 次（≈2 分钟）来一次全分辨率，用于核对文字与斜纹细节 */
+            if (++dump_no % 6 == 0) Board_DumpFbFull();
+            else                    Board_DumpFb();
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
