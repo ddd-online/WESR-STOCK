@@ -147,6 +147,32 @@ static void test_marks(void)
     assert(strcmp(list[3].mark, "中国") == 0);      /* 冲突 → 前两个字 */
 }
 
+static void test_map_and_time(void)
+{
+    assert(wesr_minute_index(900)  == 0);      /* 开盘前 clamp */
+    assert(wesr_minute_index(925)  == 0);      /* 集合竞价点也贴左边界 */
+    assert(wesr_minute_index(930)  == 0);
+    assert(wesr_minute_index(1000) == 30);
+    assert(wesr_minute_index(1130) == 120);
+    assert(wesr_minute_index(1200) == 120);    /* 午休整段压掉 */
+    assert(wesr_minute_index(1300) == 121);
+    assert(wesr_minute_index(1500) == 241);
+    assert(wesr_minute_index(1530) == 241);    /* 实测有 1530 点，clamp */
+    assert(wesr_index_to_x(0, 0, 380) == 0);
+    assert(wesr_index_to_x(241, 0, 380) == 380);
+    assert(wesr_index_to_x(241 * 2, 0, 380) == 380);   /* 防溢出 */
+
+    assert(wesr_in_trading(915));
+    assert(wesr_in_trading(1000));
+    assert(wesr_in_trading(1130));
+    assert(!wesr_in_trading(1131));
+    assert(!wesr_in_trading(1259));
+    assert(wesr_in_trading(1300));
+    assert(wesr_in_trading(1500));
+    assert(!wesr_in_trading(1501));
+    assert(!wesr_in_trading(900));
+}
+
 int main(void)
 {
     test_quote();
@@ -156,6 +182,7 @@ int main(void)
     test_minute_meta();
     test_fmt();
     test_marks();
+    test_map_and_time();
     printf("all logic tests passed\n");
     return 0;
 }
