@@ -101,3 +101,14 @@ typedef struct {
 
 void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
                        const wesr_chart_opts_t *o);
+
+typedef struct {
+    char ssid[33];
+    char pass[65];
+    wesr_stock_cfg_t stocks[WESR_MAX_STOCKS];
+    uint8_t count;
+    uint16_t refresh_sec;
+} wesr_app_cfg_t;
+
+void wesr_cfg_defaults(wesr_app_cfg_t *cfg);
+bool wesr_code_valid(const char *code);

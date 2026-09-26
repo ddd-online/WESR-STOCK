@@ -373,6 +373,26 @@ static void test_chart_render(void)
     wesr_chart_render(&b, &m, 0.0f, &o);
 }
 
+static void test_defaults_and_code(void)
+{
+    wesr_app_cfg_t cfg;
+    wesr_cfg_defaults(&cfg);
+    assert(cfg.count == 8);
+    assert(cfg.refresh_sec == 15);
+    assert(strcmp(cfg.stocks[0].code, "sh600519") == 0);
+    assert(strcmp(cfg.stocks[0].mark, "贵") == 0);
+    for (int i = 0; i < cfg.count; i++) assert(wesr_code_valid(cfg.stocks[i].code));
+
+    assert(wesr_code_valid("sh600519"));
+    assert(wesr_code_valid("sz300750"));
+    assert(wesr_code_valid("bj430047"));
+    assert(!wesr_code_valid("600519"));      /* 缺市场前缀 */
+    assert(!wesr_code_valid("sh60051"));     /* 位数不够 */
+    assert(!wesr_code_valid("us600519"));    /* 不支持的市场 */
+    assert(!wesr_code_valid(""));
+    assert(!wesr_code_valid(NULL));
+}
+
 int main(void)
 {
     test_quote();
@@ -387,6 +407,7 @@ int main(void)
     test_sched();
     test_bmp_primitives();
     test_chart_render();
+    test_defaults_and_code();
     printf("all logic tests passed\n");
     return 0;
 }
