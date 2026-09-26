@@ -13,7 +13,9 @@ idf_component_register(
     "logic/chart_draw.c"
     "logic/defaults.c"
     "app/cfg_store.c"
-    INCLUDE_DIRS "include"
+    "port/board_init.cpp"
+    "ui/ui_root.c"
+    INCLUDE_DIRS "include" "ui"
     REQUIRES port_bsp app_bsp lvgl__lvgl
     # 不拉 json/cJSON：解析是手写的（IDF v6 起 json 组件也不再内置）
     PRIV_REQUIRES esp_wifi nvs_flash esp_http_client mbedtls esp_timer)
