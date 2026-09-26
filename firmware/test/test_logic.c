@@ -218,6 +218,45 @@ static void test_nav(void)
     assert(n.idx == 0);
 }
 
+static void test_sched(void)
+{
+    wesr_sched_t s;
+    wesr_sched_init(&s, 15);
+    assert(wesr_sched_tick(&s, 0, true) == WESR_FETCH_QUOTES);   /* 第 1 页到点 */
+    wesr_sched_result(&s, true, 0);
+    assert(wesr_sched_tick(&s, 1000, true) == WESR_FETCH_NONE);  /* 未到 15s */
+    assert(wesr_sched_tick(&s, 15000, true) == WESR_FETCH_QUOTES);
+
+    wesr_sched_result(&s, false, 15000);                          /* 失败 → 5s 退避 */
+    assert(s.fail_streak == 1 && !s.offline);
+    assert(wesr_sched_tick(&s, 19999, true) == WESR_FETCH_NONE);
+    assert(wesr_sched_tick(&s, 20000, true) == WESR_FETCH_QUOTES);
+    wesr_sched_result(&s, false, 20000);                          /* 10s */
+    assert(wesr_sched_tick(&s, 29999, true) == WESR_FETCH_NONE);
+    assert(wesr_sched_tick(&s, 30000, true) == WESR_FETCH_QUOTES);
+    wesr_sched_result(&s, false, 30000);                          /* 20s */
+    assert(wesr_sched_tick(&s, 50000, true) == WESR_FETCH_QUOTES);
+    wesr_sched_result(&s, false, 50000);                          /* 30s，封顶 */
+    assert(wesr_sched_tick(&s, 80000, true) == WESR_FETCH_QUOTES);
+    wesr_sched_result(&s, false, 80000);                          /* 第 5 次失败 */
+    assert(s.offline);
+    assert(wesr_sched_tick(&s, 110000, true) == WESR_FETCH_QUOTES);
+    wesr_sched_result(&s, true, 110000);                          /* 恢复 */
+    assert(!s.offline && s.fail_streak == 0);
+    assert(wesr_sched_tick(&s, 125000, true) == WESR_FETCH_QUOTES); /* 回到 15s */
+
+    wesr_sched_page(&s, 3);                                       /* 切页立刻可拉 */
+    assert(wesr_sched_tick(&s, 125001, true) == WESR_FETCH_MINUTES);
+    wesr_sched_result(&s, true, 125001);
+    wesr_sched_page(&s, 4);
+    assert(wesr_sched_tick(&s, 125002, true) == WESR_FETCH_NONE); /* 第 4 页不发请求 */
+
+    wesr_sched_page(&s, 1);
+    assert(wesr_sched_tick(&s, 200000, false) == WESR_FETCH_NONE); /* 休市不请求 */
+    assert(wesr_sched_tick(&s, 210000, true) == WESR_FETCH_NONE);  /* 休市那次把下次检查推到 260000 */
+    assert(wesr_sched_tick(&s, 260000, true) == WESR_FETCH_QUOTES);
+}
+
 int main(void)
 {
     test_quote();
@@ -229,6 +268,7 @@ int main(void)
     test_marks();
     test_map_and_time();
     test_nav();
+    test_sched();
     printf("all logic tests passed\n");
     return 0;
 }

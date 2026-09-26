@@ -63,3 +63,16 @@ void    wesr_nav_double(wesr_nav_t *n);
 void    wesr_nav_set_count(wesr_nav_t *n, uint8_t count);
 uint8_t wesr_nav_group_start(const wesr_nav_t *n);
 uint8_t wesr_nav_pages(void);
+
+typedef enum { WESR_FETCH_NONE = 0, WESR_FETCH_QUOTES, WESR_FETCH_MINUTES } wesr_fetch_t;
+typedef struct {
+    uint8_t page;
+    uint16_t interval_s;
+    uint32_t next_ms;
+    uint8_t fail_streak;
+    bool offline;
+} wesr_sched_t;
+void         wesr_sched_init(wesr_sched_t *s, uint16_t interval_s);
+void         wesr_sched_page(wesr_sched_t *s, uint8_t page);
+wesr_fetch_t wesr_sched_tick(wesr_sched_t *s, uint32_t now_ms, bool trading);
+void         wesr_sched_result(wesr_sched_t *s, bool ok, uint32_t now_ms);
