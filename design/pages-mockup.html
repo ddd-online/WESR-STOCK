@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>WESR-STOCK 界面设计稿</title>
+<!--
+  设计稿说明：
+  - 开发板 4 屏按 1:1 像素绘制（400x300 横屏；面板物理尺寸 300x400，横过来用）
+  - RLCD 是 1-bit 黑白屏：只能纯黑/纯白，没有灰度、没有背光、不能显示彩色
+    所以涨跌不用红绿，改成 ▲/▼；分时图用「实线=价格 / 虚线=均价 / 横虚线=昨收」
+  - 顶部状态栏 4 屏都有：WiFi / 蓝牙 / 页码 / 电量
+  - 行情方案 A：板子直连公开行情接口，无自建服务器
+-->
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#e9e9e9;color:#111;padding:28px 32px 60px;
+       font-family:"Microsoft YaHei UI","Microsoft YaHei",sans-serif}
+  h1{font-size:20px;margin-bottom:4px}
+  h2{font-size:15px;margin:34px 0 14px;padding-bottom:6px;border-bottom:2px solid #111}
+  .note{font-size:12px;color:#555;margin-bottom:22px;line-height:1.7}
+  .row{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+  figure{display:flex;flex-direction:column;gap:8px}
+  figcaption{font-size:12px;color:#333;width:400px}
+  figcaption b{display:block;font-size:13px;margin-bottom:2px}
+
+  /* ---------- 开发板屏幕 400x300 ---------- */
+  .screen{width:400px;height:300px;background:#fff;color:#000;border:2px solid #000;
+          display:flex;flex-direction:column;overflow:hidden;position:relative}
+  .hd{height:24px;flex:0 0 24px;display:flex;align-items:center;gap:5px;
+      padding:0 6px;border-bottom:1px solid #000;font-size:10px}
+  .hd .sp{flex:1}
+  .hd .txt{font-size:11px;font-weight:700}
+  .ico{width:12px;height:10px;flex:0 0 auto;display:block}
+  .ico-bt{width:9px;height:12px}
+  .ico-bat{width:19px;height:10px}
+  .dots{display:flex;gap:3px}
+  .dot{width:5px;height:5px;border:1px solid #000;border-radius:50%}
+  .dot.on{background:#000}
+  .bank{display:flex;gap:2px;margin-left:6px}
+  .b{width:7px;height:3px;border:1px solid #000}
+  .b.on{background:#000}
+  .body{flex:1;display:flex;min-height:0}
+  /* 状态条：无实时数据时贴在顶栏下面，需要用户动手的用反白（1-bit 里最醒目的做法） */
+  .sbar{flex:0 0 auto;border-bottom:1px solid #000;padding:2px 0;text-align:center;
+        font-size:9px;letter-spacing:.5px}
+  .sbar.alert{background:#000;color:#fff}
+
+  /* ---------- 第 1 页：时钟 + 8 行自选（左 300 / 右 100） ---------- */
+  .p1l{width:300px;flex:0 0 300px;border-right:1px solid #000;padding:18px 16px 12px;
+       display:flex;flex-direction:column}
+  .clock{font-size:78px;font-weight:700;line-height:.9;letter-spacing:-3px;
+         font-variant-numeric:tabular-nums}
+  .date{font-size:14px;margin-top:10px;letter-spacing:1px}
+  .env{margin-top:auto;display:flex;border-top:1px dotted #000;padding-top:6px}
+  .erow{flex:1;text-align:center;border-left:1px dotted #000}
+  .erow:first-child{border-left:none}
+  .erow .k{font-size:11px}
+  .erow .v{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;
+           display:block;margin-top:1px}
+  .erow .v small{font-size:10px;font-weight:400}
+  /* 右侧 100px：8 行、每行两行小字、无分隔线 —— 只是时钟旁的附属信息 */
+  .p1r{width:100px;flex:0 0 100px;display:flex;flex-direction:column;
+       padding:6px 0;min-width:0}
+  .srow{flex:1;display:flex;flex-direction:column;justify-content:center;
+        padding:0 7px;min-height:0;border-bottom:1px solid #000}
+  .srow:last-child{border-bottom:none}
+  .srow .t{display:flex;align-items:baseline;justify-content:space-between;gap:4px}
+  .srow .code{font-size:14px;line-height:1}
+  .srow .chg{font-size:9px;font-variant-numeric:tabular-nums}
+  .srow .px{font-size:14px;font-variant-numeric:tabular-nums;margin-top:1px}
+
+  /* ---------- 第 2 页：四宫格分时 ---------- */
+  .grid4{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;
+         min-height:0}
+  .q{padding:6px 9px 4px;display:flex;flex-direction:column;min-height:0;
+     border-right:1px solid #000;border-bottom:1px solid #000}
+  .q:nth-child(2),.q:nth-child(4){border-right:none}
+  .q:nth-child(3),.q:nth-child(4){border-bottom:none}
+  .q .t{display:flex;align-items:baseline;justify-content:space-between}
+  .q .code{font-size:14px;font-weight:700;letter-spacing:1px}
+  .q .chg{font-size:10px}
+  .q .px{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+  .trend{width:100%;flex:1;min-height:0;display:block;margin-top:2px}
+
+  /* ---------- 第 3 页：单只分时（含成交量） ---------- */
+  .p3{flex:1;display:flex;flex-direction:column;padding:6px 9px 3px;min-height:0}
+  .p3hd{display:flex;align-items:baseline;gap:7px}
+  .p3hd .code{font-size:17px;font-weight:700;letter-spacing:1px}
+  .p3hd .name{font-size:10px}
+  .p3hd .idx{font-size:9px}
+  .p3hd .sp{flex:1}
+  .p3hd .chg{font-size:11px}
+  .p3px{display:flex;align-items:baseline;gap:10px}
+  .p3px .big{font-size:25px;font-weight:700;font-variant-numeric:tabular-nums}
+  .p3sub{font-size:9px;margin:0 0 2px;display:flex;gap:10px;align-items:center}
+  .p3sub .lg{display:inline-flex;align-items:center;gap:3px}
+  .p3sub .l1{width:16px;height:0;border-top:1.4px solid #000}
+  .p3sub .l2{width:16px;height:0;border-top:1.2px dashed #000}
+  .p3chart{flex:1;min-height:0;display:block;width:100%}
+  .ohlc{display:flex;justify-content:space-between;font-size:10px;
+        border-top:1px solid #000;padding-top:3px;margin-top:2px;
+        font-variant-numeric:tabular-nums}
+  .ohlc b{font-weight:700}
+
+  /* ---------- 第 4 页：系统状态（双栏） ---------- */
+  .p4{flex:1;display:flex;gap:14px;padding:6px 10px 2px;min-height:0}
+  .p4c{flex:1;min-width:0}
+  .p4t{font-size:10px;font-weight:700;letter-spacing:1px;margin:5px 0 1px;
+       border-bottom:1px solid #000;padding-bottom:1px}
+  .p4t:first-child{margin-top:0}
+  .r{display:flex;justify-content:space-between;gap:6px;padding:3px 0;
+     font-size:10px;font-variant-numeric:tabular-nums}
+  .r .v{font-weight:700;white-space:nowrap}
+  .r .v.warn{text-decoration:underline}
+  .p4f{flex:0 0 auto;border-top:1px solid #000;padding:2px 10px;font-size:9px;
+        display:flex;justify-content:space-between}
+
+  /* ---------- 微信小程序 ---------- */
+  .phone{width:375px;height:812px;background:#fff;border:2px solid #111;
+         border-radius:10px;overflow:hidden;display:flex;flex-direction:column;
+         font-size:14px}
+  .phone ~ figcaption{width:375px}
+  .phbar{height:44px;flex:0 0 44px;display:flex;align-items:center;justify-content:center;
+         font-size:15px;font-weight:700;border-bottom:1px solid #eee}
+  .phbody{flex:1;background:#f7f7f7;overflow:hidden;display:flex;flex-direction:column}
+  .card{background:#fff;margin:10px 12px;border-radius:10px;padding:14px}
+  .kv{display:flex;justify-content:space-between;padding:7px 0;font-size:13px;
+      border-bottom:1px solid #f0f0f0}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:#666}
+  .up{color:#d03050;font-weight:700}
+  .down{color:#0a8f56;font-weight:700}
+  .btn{background:#07c160;color:#fff;text-align:center;border-radius:8px;
+       padding:11px;font-size:15px;margin:10px 12px}
+  .btn.ghost{background:#fff;color:#07c160;border:1px solid #07c160}
+  .li{display:flex;align-items:center;gap:10px;background:#fff;padding:12px 14px;
+      border-bottom:1px solid #f0f0f0;font-size:13px}
+  .li .nm{font-weight:700;min-width:96px}
+  .li .nm small{display:block;color:#888;font-size:10px;font-weight:400}
+  .li .nm .tag{margin-left:4px}
+  .li .px{margin-left:auto;text-align:right;font-variant-numeric:tabular-nums}
+  .li .px small{display:block;color:#888;font-size:11px}
+  .li .handle{color:#ccc;font-size:16px;letter-spacing:1px}
+  .li .del{color:#d03050;font-size:12px}
+  .li .tag{font-size:10px;border:1px solid #ddd;border-radius:4px;padding:1px 4px;
+           color:#888;font-style:normal}
+  .li .tag.alt{color:#07c160;border-color:#07c160}
+  .input{background:#f2f2f2;border-radius:8px;padding:11px 12px;font-size:13px;
+         margin:10px 12px;color:#333;display:flex;justify-content:space-between}
+  .sect{font-size:12px;color:#888;margin:14px 14px 6px}
+  .chips{display:flex;gap:8px;margin:0 12px;flex-wrap:wrap}
+  .chip{border:1px solid #ddd;border-radius:14px;padding:6px 12px;font-size:12px;background:#fff}
+  .chip.on{background:#07c160;border-color:#07c160;color:#fff}
+  .rules{margin-top:20px;background:#fff;border:1px solid #ccc;padding:16px 20px;
+         font-size:12.5px;line-height:2;color:#333;max-width:1240px}
+  .rules b{color:#111}
+  .rules code{background:#f2f2f2;padding:1px 5px;font-size:11.5px}
+</style>
+</head>
+<body>
+
+<h1>WESR-STOCK 界面设计稿</h1>
+<p class="note">
+  开发板 4 屏按 1:1 像素绘制（<b>400×300 横屏</b>，与实物 RLCD 一致）。屏幕是 <b>1-bit 黑白</b>：没有灰度、没有背光、不能显示颜色，
+  所以涨跌用 <b>▲/▼</b>；分时图用「实线 = 价格、虚线 = 均价、横虚线 = 昨收」。
+  按键：<b>单击 KEY 切页</b>（1→2→3→4→1）、<b>双击 KEY 换股票</b>（第 2 页切第 1/2 组、第 3 页按序切 8 只）、<b>长按 KEY 3 秒进配网模式</b>；行情每 15 秒自动刷新，不做手动刷新。
+  行情由板子直连公开接口（方案 A），股票池固定 <b>8 只</b>；<b>只有第 1 页用缩写，且取的是股票名的第一个字</b>（贵/宁/比…），第 2、3 页显示全名。
+  没有实时数据时按方案 C 显示状态条：休市用细线提示，未联网 / 未配网用反白提示。
+</p>
+
+<!-- 1-bit 图标 -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-wifi" viewBox="0 0 12 10">
+    <path d="M6 9.3a1.1 1.1 0 1 0 0-2.2 1.1 1.1 0 0 0 0 2.2z"/>
+    <path d="M2.7 5.3a4.8 4.8 0 0 1 6.6 0" fill="none" stroke="#000" stroke-width="1.5"/>
+    <path d="M.9 3.1a7.4 7.4 0 0 1 10.2 0" fill="none" stroke="#000" stroke-width="1.5"/>
+  </symbol>
+  <symbol id="i-bt" viewBox="0 0 10 14">
+    <path d="M5 1v12M5 1l3.4 3-6.8 6M5 13l3.4-3-6.8-6" fill="none" stroke="#000"
+          stroke-width="1.3" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-bat" viewBox="0 0 19 10">
+    <rect x=".5" y=".5" width="15.5" height="9" fill="none" stroke="#000"/>
+    <rect x="16.5" y="3" width="2.5" height="4"/>
+    <rect x="2" y="2" width="10" height="6"/>
+  </symbol>
+</svg>
+
+<h2>一、开发板四个页面（400×300）</h2>
+<div class="row" id="screens">
+
+  <!-- ============ 页面 1 ============ -->
+  <figure>
+    <div class="screen">
+      <div class="hd">
+        <svg class="ico"><use href="#i-wifi"/></svg>
+        <svg class="ico ico-bt"><use href="#i-bt"/></svg>
+        <span class="sp"></span>
+        <span class="dots"><i class="dot on"></i><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+        <span class="sp"></span>
+        <span class="txt">82%</span>
+        <svg class="ico ico-bat"><use href="#i-bat"/></svg>
+      </div>
+      <div class="body">
+        <div class="p1l">
+          <div class="clock">09:41</div>
+          <div class="date">9月27日 周六</div>
+          <div class="env">
+            <div class="erow"><span class="k">温度</span><span class="v">24.6<small>°C</small></span></div>
+            <div class="erow"><span class="k">湿度</span><span class="v">58<small>%</small></span></div>
+          </div>
+        </div>
+        <div class="p1r">
+          <div class="srow"><span class="t"><span class="code">贵</span><span class="chg">▲0.84%</span></span><span class="px">1682.50</span></div>
+          <div class="srow"><span class="t"><span class="code">宁</span><span class="chg">▼1.24%</span></span><span class="px">372.16</span></div>
+          <div class="srow"><span class="t"><span class="code">比</span><span class="chg">▲2.10%</span></span><span class="px">284.66</span></div>
+          <div class="srow"><span class="t"><span class="code">招</span><span class="chg">▲0.12%</span></span><span class="px">41.03</span></div>
+          <div class="srow"><span class="t"><span class="code">中</span><span class="chg">▼0.45%</span></span><span class="px">52.88</span></div>
+          <div class="srow"><span class="t"><span class="code">沪</span><span class="chg">▼0.36%</span></span><span class="px">4012.88</span></div>
+          <div class="srow"><span class="t"><span class="code">五</span><span class="chg">▲0.62%</span></span><span class="px">128.40</span></div>
+          <div class="srow"><span class="t"><span class="code">长</span><span class="chg">▼0.22%</span></span><span class="px">28.50</span></div>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>第 1 页 · 时钟看盘</b>左 300px / 右 100px。左：78px 大时间 + 日期 + 温度·湿度（伪装成桌面时钟）　右：8 行小字，<b>只显示股票名的第一个字</b>（贵/宁/比/招/中/沪/五/长），每行「首字 + 涨跌」一行、「现价」一行，<b>行间加细分隔线</b></figcaption>
+  </figure>
+
+  <!-- ============ 页面 2 ============ -->
+  <figure>
+    <div class="screen">
+      <div class="hd">
+        <svg class="ico"><use href="#i-wifi"/></svg>
+        <svg class="ico ico-bt"><use href="#i-bt"/></svg>
+        <span class="sp"></span>
+        <span class="dots"><i class="dot"></i><i class="dot on"></i><i class="dot"></i><i class="dot"></i></span>
+        <span class="bank"><i class="b on"></i><i class="b"></i></span>
+        <span class="sp"></span>
+        <span class="txt">82%</span>
+        <svg class="ico ico-bat"><use href="#i-bat"/></svg>
+      </div>
+      <div class="grid4">
+        <div class="q">
+          <div class="t"><span class="code">贵州茅台</span><span class="chg">▲ 0.84%</span></div>
+          <div class="px">1682.50</div>
+          <svg class="trend" data-seed="7" data-pct="0.84"></svg>
+        </div>
+        <div class="q">
+          <div class="t"><span class="code">宁德时代</span><span class="chg">▼ 1.24%</span></div>
+          <div class="px">372.16</div>
+          <svg class="trend" data-seed="21" data-pct="-1.24"></svg>
+        </div>
+        <div class="q">
+          <div class="t"><span class="code">比亚迪</span><span class="chg">▲ 2.10%</span></div>
+          <div class="px">284.66</div>
+          <svg class="trend" data-seed="33" data-pct="2.10"></svg>
+        </div>
+        <div class="q">
+          <div class="t"><span class="code">招商银行</span><span class="chg">▲ 0.12%</span></div>
+          <div class="px">41.03</div>
+          <svg class="trend" data-seed="41" data-pct="0.12"></svg>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>第 2 页 · 四宫格分时</b>默认显示股票池的 <b>第 1–4 只</b>；双击 KEY 切到第 5–8 只（顶栏页码点后面的小方块 = 当前第几组）。这里显示<b>完整股票名</b>，不再用缩写；每格含当日分时图，横虚线是昨收</figcaption>
+  </figure>
+
+  <!-- ============ 页面 3 ============ -->
+  <figure>
+    <div class="screen">
+      <div class="hd">
+        <svg class="ico"><use href="#i-wifi"/></svg>
+        <svg class="ico ico-bt"><use href="#i-bt"/></svg>
+        <span class="sp"></span>
+        <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot on"></i><i class="dot"></i></span>
+        <span class="sp"></span>
+        <span class="txt">82%</span>
+        <svg class="ico ico-bat"><use href="#i-bat"/></svg>
+      </div>
+      <div class="p3">
+        <div class="p3hd"><span class="code">贵州茅台</span><span class="idx">1/8</span>
+          <span class="sp"></span><span class="chg">▲ 0.84%　+14.00</span></div>
+        <div class="p3px"><span class="big">1682.50</span><span>昨收 1668.50</span></div>
+        <div class="p3sub">
+          <span>分时 09:30—15:00</span>
+          <span class="lg"><i class="l1"></i>价格</span>
+          <span class="lg"><i class="l2"></i>均价 1668.20</span>
+          <span class="lg"><i class="l2"></i>昨收</span>
+        </div>
+        <svg class="p3chart" data-seed="11" data-pct="0.84"></svg>
+        <div class="ohlc">
+          <span>开 <b>1670.0</b></span><span>高 <b>1690.5</b></span>
+          <span>低 <b>1665.2</b></span><span>均价 <b>1668.2</b></span>
+          <span>量 <b>2.31万手</b></span>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>第 3 页 · 个股分时</b>双击 KEY 按序切换 8 只股票（<code>1/8</code> 是当前位置，8 只循环），这里显示全名。分时大图 + 成交量柱 + 时间轴，价格与昨收之间的区域用斜纹填充表示涨</figcaption>
+  </figure>
+
+  <!-- ============ 页面 4 ============ -->
+  <figure>
+    <div class="screen">
+      <div class="hd">
+        <svg class="ico"><use href="#i-wifi"/></svg>
+        <svg class="ico ico-bt"><use href="#i-bt"/></svg>
+        <span class="sp"></span>
+        <span class="dots"><i class="dot"></i><i class="dot"></i><i class="dot"></i><i class="dot on"></i></span>
+        <span class="sp"></span>
+        <span class="txt">82%</span>
+        <svg class="ico ico-bat"><use href="#i-bat"/></svg>
+      </div>
+      <div class="p4">
+        <div class="p4c">
+          <div class="p4t">网络</div>
+          <div class="r"><span>WiFi</span><span class="v">HOME-5G</span></div>
+          <div class="r"><span>信号</span><span class="v">-58 dBm</span></div>
+          <div class="r"><span>IP</span><span class="v">192.168.1.42</span></div>
+          <div class="r"><span>蓝牙</span><span class="v">已连接·小程序</span></div>
+          <div class="p4t">电源 / 环境</div>
+          <div class="r"><span>电池</span><span class="v">3.95V　82%</span></div>
+          <div class="r"><span>充电</span><span class="v">未充电</span></div>
+          <div class="r"><span>温湿度</span><span class="v">24.6°C　58%</span></div>
+          <div class="r"><span>SD 卡</span><span class="v warn">未插入</span></div>
+        </div>
+        <div class="p4c">
+          <div class="p4t">行情</div>
+          <div class="r"><span>数据源</span><span class="v">直连·腾讯</span></div>
+          <div class="r"><span>刷新</span><span class="v">15 秒</span></div>
+          <div class="r"><span>更新</span><span class="v">09:41:03</span></div>
+          <div class="r"><span>今日失败</span><span class="v">2 次（已恢复）</span></div>
+          <div class="r"><span>股票池</span><span class="v">8 只</span></div>
+          <div class="r"><span>第 2 页组</span><span class="v">1-4</span></div>
+          <div class="r"><span>第 3 页</span><span class="v">1/8</span></div>
+          <div class="p4t">系统</div>
+          <div class="r"><span>固件</span><span class="v">v0.1.0</span></div>
+          <div class="r"><span>运行时长</span><span class="v">3天 04:12</span></div>
+          <div class="r"><span>内存</span><span class="v">Heap 142K</span></div>
+          <div class="r"><span>PSRAM</span><span class="v">空闲 6.1M</span></div>
+        </div>
+      </div>
+      <div class="p4f"><span>单击 切页</span><span>双击 换股</span><span>长按3秒 配网</span></div>
+    </div>
+    <figcaption><b>第 4 页 · 系统状态</b>网络 / 电源环境 / 行情健康度（含当前股票组、第 3 页位置）/ 系统资源，双栏排布</figcaption>
+  </figure>
+</div>
+
+<h2 id="edge">二、边界态（股票不足 8 只 / 停牌 / 无数据）</h2>
+<div class="row">
+
+  <!-- 边界 A：只配了 5 只，其中 1 只停牌 -->
+  <figure>
+    <div class="screen">
+      <div class="hd">
+        <svg class="ico"><use href="#i-wifi"/></svg>
+        <svg class="ico ico-bt"><use href="#i-bt"/></svg>
+        <span class="sp"></span>
+        <span class="dots"><i class="dot on"></i><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+        <span class="sp"></span>
+        <span class="txt">82%</span>
+        <svg class="ico ico-bat"><use href="#i-bat"/></svg>
+      </div>
+      <div class="body">
+        <div class="p1l">
+          <div class="clock">09:41</div>
+          <div class="date">9月27日 周六</div>
+          <div class="env">
+            <div class="erow"><span class="k">温度</span><span class="v">24.6<small>°C</small></span></div>
+            <div class="erow"><span class="k">湿度</span><span class="v">58<small>%</small></span></div>
+          </div>
+        </div>
+        <div class="p1r">
+          <div class="srow"><span class="t"><span class="code">贵</span><span class="chg">▲0.84%</span></span><span class="px">1682.50</span></div>
+          <div class="srow"><span class="t"><span class="code">宁</span><span class="chg">▼1.24%</span></span><span class="px">372.16</span></div>
+          <div class="srow"><span class="t"><span class="code">比</span><span class="chg">—</span></span><span class="px">—</span></div>
+          <div class="srow"><span class="t"><span class="code">招</span><span class="chg">▲0.12%</span></span><span class="px">41.03</span></div>
+          <div class="srow"><span class="t"><span class="code">中</span><span class="chg">▼0.45%</span></span><span class="px">52.88</span></div>
+          <div class="srow"></div>
+          <div class="srow"></div>
+          <div class="srow"></div>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>边界 A · 只配了 5 只</b>不足的 3 行直接留空（不补位、不重复）。第 3 行「比」（比亚迪）停牌：现价和涨跌都显示 <code>—</code>，不画分时线</figcaption>
+  </figure>
+
+  <!-- 边界 B：第 2 页组 2 只有 3 只 -->
+  <figure>
+    <div class="screen">
+      <div class="hd">
+        <svg class="ico"><use href="#i-wifi"/></svg>
+        <svg class="ico ico-bt"><use href="#i-bt"/></svg>
+        <span class="sp"></span>
+        <span class="dots"><i class="dot"></i><i class="dot on"></i><i class="dot"></i><i class="dot"></i></span>
+        <span class="bank"><i class="b"></i><i class="b on"></i></span>
+        <span class="sp"></span>
+        <span class="txt">82%</span>
+        <svg class="ico ico-bat"><use href="#i-bat"/></svg>
+      </div>
+      <div class="grid4">
+        <div class="q">
+          <div class="t"><span class="code">中国平安</span><span class="chg">▼ 0.45%</span></div>
+          <div class="px">52.88</div>
+          <svg class="trend" data-seed="61" data-pct="-0.45"></svg>
+        </div>
+        <div class="q">
+          <div class="t"><span class="code">沪深300</span><span class="chg">▼ 0.36%</span></div>
+          <div class="px">4012.88</div>
+          <svg class="trend" data-seed="51" data-pct="-0.36"></svg>
+        </div>
+        <div class="q">
+          <div class="t"><span class="code">五粮液</span><span class="chg">▲ 0.62%</span></div>
+          <div class="px">128.40</div>
+          <svg class="trend" data-seed="77" data-pct="0.62"></svg>
+        </div>
+        <div class="q"></div>
+      </div>
+    </div>
+    <figcaption><b>边界 B · 第 2 页切到组 2，但只有 3 只</b>第 4 格整块留空（不画空坐标系）；顶栏两个小方块表示"组 2 已选中"</figcaption>
+  </figure>
+</div>
+
+<div class="rules">
+  <b>边界规则（固件按这一组实现）</b><br>
+  1. 股票池上限 8 只，按下标 0–7 固定占位：不足就留空，<b>不补位、不重复、不抽稀</b>。<br>
+  2. <code>0 只</code>：第 1 页右侧整列留空，第 2 页四格全空，第 3 页显示「未配置股票」，第 4 页股票池 <code>0</code>；双击 KEY 无动作。<br>
+  3. <code>1–4 只</code>：第 2 页只有组 1，双击无效，顶栏只显示一个小方块。<br>
+  4. <code>5–8 只</code>：组 2 固定放第 5–8 只，缺的那几格留空（边界 B）。<br>
+  5. 第 3 页双击：<code>idx = (idx + 1) % 总数</code> 回绕；总数被小程序改小后，<code>idx = min(idx, 总数-1)</code>，避免越界。<br>
+  6. 停牌 / 无数据：现价、涨跌、均价统一显示 <code>—</code>，分时区<b>不画线</b>（画一条假直线比留白更误导）。<br>
+  7. 涨跌为 0：显示 <code>0.00%</code>，不加 ▲▼。<br>
+  8. 昨收为 0 或缺失：整块显示 <code>—</code> 且不画图（防除零）；接口返回的负价、NaN 一律当无数据丢弃。<br>
+  9. 开盘不久点数不足 240：只画已有那段，右侧留白；10:30 / 11:30·13:00 / 14:00 刻度仍按整天比例画，不压缩。<br>
+  10. 数值排版：A 股 2 位小数、指数 2 位；整数部分 ≥5 位时字号自动降一档（<code>1682.50 → 12px</code> 兜底），避免顶破 100px 栏宽。<br>
+  11. 单只涨幅 &gt;10%（新股 / 退市整理）：分时纵轴按实际数据算，不写死 ±10%。<br>
+  12. 刷新失败：沿用上一次数据，第 4 页「今日失败」+1；连续失败 5 次后顶栏出现反白状态条「未联网」。<br>
+  13. 第 1 页首字冲突（<code>中国平安</code> / <code>中国太保</code> 都取「中」）：默认退回显示<b>前两个字</b>，小程序里也能手动改成任意 1–2 字。
+  <br>
+  14. 按键定稿：单击 = 切页（4 页循环）；双击 = 换股（第 2 页切组、第 3 页切只），双击时页面不跳；<b>长按 3 秒 = 进配网模式</b>（BLE 广播 + 顶栏反白状态条提示），长按不刷新行情。行情刷新全自动：交易时段每 15 秒一次，休市不请求。
+</div>
+
+<h2>三、拿不到实时数据时的状态条（方案 C）</h2>
+<div class="row">
+
+  <!-- 休市 -->
+  <figure>
+    <div class="screen">
+      <div class="hd">
+        <svg class="ico"><use href="#i-wifi"/></svg>
+        <svg class="ico ico-bt"><use href="#i-bt"/></svg>
+        <span class="sp"></span>
+        <span class="dots"><i class="dot on"></i><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+        <span class="sp"></span>
+        <span class="txt">82%</span>
+        <svg class="ico ico-bat"><use href="#i-bat"/></svg>
+      </div>
+      <div class="sbar">休市 · 显示 09-26 收盘数据</div>
+      <div class="body">
+        <div class="p1l">
+          <div class="clock">09:41</div>
+          <div class="date">9月27日 周六</div>
+          <div class="env">
+            <div class="erow"><span class="k">温度</span><span class="v">24.6<small>°C</small></span></div>
+            <div class="erow"><span class="k">湿度</span><span class="v">58<small>%</small></span></div>
+          </div>
+        </div>
+        <div class="p1r">
+          <div class="srow"><span class="t"><span class="code">贵</span><span class="chg">▲0.84%</span></span><span class="px">1682.50</span></div>
+          <div class="srow"><span class="t"><span class="code">宁</span><span class="chg">▼1.24%</span></span><span class="px">372.16</span></div>
+          <div class="srow"><span class="t"><span class="code">比</span><span class="chg">▲2.10%</span></span><span class="px">284.66</span></div>
+          <div class="srow"><span class="t"><span class="code">招</span><span class="chg">▲0.12%</span></span><span class="px">41.03</span></div>
+          <div class="srow"><span class="t"><span class="code">中</span><span class="chg">▼0.45%</span></span><span class="px">52.88</span></div>
+          <div class="srow"><span class="t"><span class="code">沪</span><span class="chg">▼0.36%</span></span><span class="px">4012.88</span></div>
+          <div class="srow"><span class="t"><span class="code">五</span><span class="chg">▲0.62%</span></span><span class="px">128.40</span></div>
+          <div class="srow"><span class="t"><span class="code">长</span><span class="chg">▼0.22%</span></span><span class="px">28.50</span></div>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>状态条 1 · 休市 / 非交易时段</b>数据保持当天收盘值不闪不归零，顶部细线状态条提示；时钟、温湿度照常走（RTC + SHTC3 都是本地件）</figcaption>
+  </figure>
+
+  <!-- 未联网 -->
+  <figure>
+    <div class="screen">
+      <div class="hd">
+        <svg class="ico"><use href="#i-wifi"/></svg>
+        <svg class="ico ico-bt"><use href="#i-bt"/></svg>
+        <span class="sp"></span>
+        <span class="dots"><i class="dot on"></i><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+        <span class="sp"></span>
+        <span class="txt">82%</span>
+        <svg class="ico ico-bat"><use href="#i-bat"/></svg>
+      </div>
+      <div class="sbar alert">未联网 · 显示 09-26 收盘数据</div>
+      <div class="body">
+        <div class="p1l">
+          <div class="clock">09:41</div>
+          <div class="date">9月27日 周六</div>
+          <div class="env">
+            <div class="erow"><span class="k">温度</span><span class="v">24.6<small>°C</small></span></div>
+            <div class="erow"><span class="k">湿度</span><span class="v">58<small>%</small></span></div>
+          </div>
+        </div>
+        <div class="p1r">
+          <div class="srow"><span class="t"><span class="code">贵</span><span class="chg">▲0.84%</span></span><span class="px">1682.50</span></div>
+          <div class="srow"><span class="t"><span class="code">宁</span><span class="chg">▼1.24%</span></span><span class="px">372.16</span></div>
+          <div class="srow"><span class="t"><span class="code">比</span><span class="chg">▲2.10%</span></span><span class="px">284.66</span></div>
+          <div class="srow"><span class="t"><span class="code">招</span><span class="chg">▲0.12%</span></span><span class="px">41.03</span></div>
+          <div class="srow"><span class="t"><span class="code">中</span><span class="chg">▼0.45%</span></span><span class="px">52.88</span></div>
+          <div class="srow"><span class="t"><span class="code">沪</span><span class="chg">▼0.36%</span></span><span class="px">4012.88</span></div>
+          <div class="srow"><span class="t"><span class="code">五</span><span class="chg">▲0.62%</span></span><span class="px">128.40</span></div>
+          <div class="srow"><span class="t"><span class="code">长</span><span class="chg">▼0.22%</span></span><span class="px">28.50</span></div>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>状态条 2 · 断网 / 请求连续失败</b>需要用户动手的状态用<b>反白</b>（黑底白字）——1-bit 屏上最醒目的做法。数据沿用最后一份，不联网也能照常看行情</figcaption>
+  </figure>
+
+  <!-- 未配网 -->
+  <figure>
+    <div class="screen">
+      <div class="hd">
+        <svg class="ico"><use href="#i-wifi"/></svg>
+        <svg class="ico ico-bt"><use href="#i-bt"/></svg>
+        <span class="sp"></span>
+        <span class="dots"><i class="dot on"></i><i class="dot"></i><i class="dot"></i><i class="dot"></i></span>
+        <span class="sp"></span>
+        <span class="txt">82%</span>
+        <svg class="ico ico-bat"><use href="#i-bat"/></svg>
+      </div>
+      <div class="sbar alert">未配网 · 长按 KEY 用小程序配网</div>
+      <div class="body">
+        <div class="p1l">
+          <div class="clock">09:41</div>
+          <div class="date">9月27日 周六</div>
+          <div class="env">
+            <div class="erow"><span class="k">温度</span><span class="v">24.6<small>°C</small></span></div>
+            <div class="erow"><span class="k">湿度</span><span class="v">58<small>%</small></span></div>
+          </div>
+        </div>
+        <div class="p1r"></div>
+      </div>
+    </div>
+    <figcaption><b>状态条 3 · 首次开机 / 未配网</b>右侧整列留空（还没拉到过数据），时钟照走（时间来自板载 RTC），温湿度是本地传感器所以照读；状态条直接给出下一步动作</figcaption>
+  </figure>
+</div>
+
+<h2>四、微信小程序（配网 + 股票设置）</h2>
+<div class="row">
+
+  <!-- 小程序 A：设备连接 -->
+  <figure>
+    <div class="phone">
+      <div class="phbar">设备</div>
+      <div class="phbody">
+        <div class="card">
+          <div class="kv"><span class="k">设备</span><span><b>WESR-STOCK-8F2A</b></span></div>
+          <div class="kv"><span class="k">连接方式</span><span>蓝牙（BLE）</span></div>
+          <div class="kv"><span class="k">状态</span><span>○ 未连接</span></div>
+          <div class="kv"><span class="k">固件</span><span>v0.1.0</span></div>
+        </div>
+        <div class="btn">搜索附近设备</div>
+        <div class="sect" style="margin-top:8px;color:#666">提示：板子需先<b>长按 KEY 3 秒</b>进入配网模式，蓝牙名才会出现</div>
+        <div class="sect">附近设备</div>
+        <div class="card">
+          <div class="kv"><span class="k">WESR-STOCK-8F2A</span><span class="up">连接</span></div>
+          <div class="kv"><span class="k">WESR-STOCK-1C07</span><span class="up">连接</span></div>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>小程序 1 · 设备连接</b>BLE 直连：小程序不用切 Wi-Fi，也不受 request 域名白名单限制</figcaption>
+  </figure>
+
+  <!-- 小程序 B：WiFi 配网 -->
+  <figure>
+    <div class="phone">
+      <div class="phbar">配置网络</div>
+      <div class="phbody">
+        <div class="sect">选择 2.4G 网络（板子扫描后经 BLE 回传）</div>
+        <div class="card">
+          <div class="kv"><span>HOME-5G</span><span>▮▮▮</span></div>
+          <div class="kv"><span>HOME-2.4G</span><span>▮▮▮▮</span></div>
+          <div class="kv"><span>Office-IoT</span><span>▮▮</span></div>
+        </div>
+        <div class="input"><span>密码</span><span>••••••••</span></div>
+        <div class="btn">保存并连接</div>
+        <div class="card">
+          <div class="kv"><span class="k">已配置</span><span>HOME-2.4G</span></div>
+          <div class="kv"><span class="k">板端 IP</span><span>192.168.1.42</span></div>
+          <div class="kv"><span class="k">信号</span><span>-58 dBm</span></div>
+        </div>
+        <div class="note" style="margin:6px 14px;font-size:11px;color:#888">
+          注意：ESP32-S3 只支持 2.4G；连 iPhone 热点需开“最大兼容性”
+        </div>
+      </div>
+    </div>
+    <figcaption><b>小程序 2 · WiFi 配网</b>SSID 列表由板子扫描后经 BLE 回传，密码经 BLE 下发</figcaption>
+  </figure>
+
+  <!-- 小程序 C：股票设置 -->
+  <figure>
+    <div class="phone">
+      <div class="phbar">股票设置</div>
+      <div class="phbody">
+        <div class="sect">股票池固定 8 只。第 1 页只显示<b>名字的第一个字</b>，第 2/3 页显示全名；顺序决定分组（前 4 只 = 组1）</div>
+        <div class="li"><span class="handle">≡</span>
+          <span class="nm">贵州茅台 <i class="tag">组1</i><small>第 1 页显示「贵」</small></span>
+          <span class="px">1682.50<small class="up">▲0.84%</small></span><span class="del">删除</span></div>
+        <div class="li"><span class="handle">≡</span>
+          <span class="nm">宁德时代 <i class="tag">组1</i><small>第 1 页显示「宁」</small></span>
+          <span class="px">372.16<small class="down">▼1.24%</small></span><span class="del">删除</span></div>
+        <div class="li"><span class="handle">≡</span>
+          <span class="nm">比亚迪 <i class="tag">组1</i><small>第 1 页显示「比」</small></span>
+          <span class="px">284.66<small class="up">▲2.10%</small></span><span class="del">删除</span></div>
+        <div class="li"><span class="handle">≡</span>
+          <span class="nm">招商银行 <i class="tag">组1</i><small>第 1 页显示「招」</small></span>
+          <span class="px">41.03<small class="up">▲0.12%</small></span><span class="del">删除</span></div>
+        <div class="li"><span class="handle">≡</span>
+          <span class="nm">中国平安 <i class="tag alt">组2</i><small>第 1 页显示「中」</small></span>
+          <span class="px">52.88<small class="down">▼0.45%</small></span><span class="del">删除</span></div>
+        <div class="li"><span class="handle">≡</span>
+          <span class="nm">沪深300 <i class="tag alt">组2</i><small>第 1 页显示「沪」</small></span>
+          <span class="px">4012.88<small class="down">▼0.36%</small></span><span class="del">删除</span></div>
+        <div class="li"><span class="handle">≡</span>
+          <span class="nm">五粮液 <i class="tag alt">组2</i><small>第 1 页显示「五」</small></span>
+          <span class="px">128.40<small class="up">▲0.62%</small></span><span class="del">删除</span></div>
+        <div class="li"><span class="handle">≡</span>
+          <span class="nm">长江电力 <i class="tag alt">组2</i><small>第 1 页显示「长」</small></span>
+          <span class="px">28.50<small class="down">▼0.22%</small></span><span class="del">删除</span></div>
+        <div class="btn ghost">+ 添加股票（最多 8 只，自动取名字第一个字）</div>
+        <div class="sect">刷新间隔</div>
+        <div class="chips">
+          <span class="chip">5 秒</span><span class="chip on">15 秒</span>
+          <span class="chip">30 秒</span><span class="chip">60 秒</span>
+        </div>
+        <div class="btn">同步到设备</div>
+      </div>
+    </div>
+    <figcaption><b>小程序 3 · 股票设置</b>只维护一个 8 只的列表，顺序即「组1 = 第 1–4 只、组2 = 第 5–8 只」。<b>第 1 页的首字不用手填，取名字第一个字</b>，同首字冲突时可手动改（如「中国平安」/「中国太保」都是「中」）。价格经 BLE 从板子读回</figcaption>
+  </figure>
+</div>
+
+<script>
+function rng(seed){ let s = seed; return () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff); }
+const NS = 'http://www.w3.org/2000/svg';
+const el = (t, a) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+const FONT = 'Microsoft YaHei UI, Microsoft YaHei, sans-serif';
+
+// 分时序列（相对昨收的比值）：首点贴着昨收，末点正好等于当日涨跌幅
+function intraday(seed, pct, n){
+  n = n || 240;
+  const r = rng(seed), acc = [0];
+  for (let i = 1; i < n; i++) acc.push(acc[i - 1] + (r() - 0.5));
+  const last = acc[n - 1];
+  const det = acc.map((v, i) => v - last * (i / (n - 1)));
+  const amp = Math.max.apply(null, det.map(Math.abs)) || 1;
+  return det.map((v, i) => 1 + (v / amp) * 0.013 + (pct / 100) * (i / (n - 1)));
+}
+
+// 成交量：开盘、收盘两头大
+function volumes(seed, n){
+  n = n || 240;
+  const r = rng(seed);
+  return Array.prototype.map.call({length:n}, (_, i) =>
+    (0.25 + r() * 0.75) * (0.45 + 0.55 * Math.abs(Math.cos(Math.PI * i / (n - 1)))));
+}
+
+// 第 2 页小图：分时价格线 + 昨收虚线，纵轴以昨收为中心对称
+function drawMini(svg, seed, pct){
+  const w = 184, h = 86, pad = 5;
+  const rel = intraday(seed, pct);
+  let hi = -Infinity, lo = Infinity;
+  rel.forEach(v => { hi = Math.max(hi, v); lo = Math.min(lo, v); });
+  const R = Math.max(hi - 1, 1 - lo) * 1.12 || 0.01;
+  const y = v => pad + (1 + R - v) / (2 * R) * (h - pad * 2);
+  const x = i => i / (rel.length - 1) * w;
+
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.appendChild(el('line', {x1:0, x2:w, y1:y(1), y2:y(1), stroke:'#000',
+    'stroke-width':0.6, 'stroke-dasharray':'2 2'}));
+  svg.appendChild(el('polyline', {points:rel.map((v, i) => x(i) + ',' + y(v)).join(' '),
+    fill:'none', stroke:'#000', 'stroke-width':1.2, 'stroke-linejoin':'round'}));
+}
+
+// 第 3 页大图：分时 + 斜纹填充 + 均价虚线 + 成交量 + 时间轴
+function drawFull(svg, seed, pct){
+  const w = 380, h = 168, padX = 2, padTop = 8;
+  const priceH = 116, volTop = 130, volH = 20, labelY = 164;
+  const rel = intraday(seed, pct);
+  const avg = (function(){ let s = 0; return rel.map((v, i) => (s += v) / (i + 1)); })();
+  const vol = volumes(seed + 3);
+
+  let hi = -Infinity, lo = Infinity;
+  rel.concat(avg).forEach(v => { hi = Math.max(hi, v); lo = Math.min(lo, v); });
+  const R = Math.max(hi - 1, 1 - lo) * 1.1 || 0.01;
+  const y = v => padTop + (1 + R - v) / (2 * R) * (priceH - padTop - 4);
+  const x = i => padX + i / (rel.length - 1) * (w - padX * 2);
+  const volMax = Math.max.apply(null, vol) || 1;
+
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  svg.setAttribute('preserveAspectRatio', 'none');
+
+  // 斜纹图案：1-bit 屏上表示"面积"的常规做法
+  const defs = el('defs', {});
+  const pat = el('pattern', {id:'hatch', width:4, height:4, patternUnits:'userSpaceOnUse',
+    patternTransform:'rotate(45)'});
+  pat.appendChild(el('line', {x1:0, y1:0, x2:0, y2:4, stroke:'#000', 'stroke-width':0.8}));
+  defs.appendChild(pat);
+  svg.appendChild(defs);
+
+  // 时间刻度竖虚线（10:30 / 11:30·13:00 / 14:00）
+  [0.25, 0.5, 0.75].forEach(function(t){
+    const xg = padX + t * (w - padX * 2);
+    svg.appendChild(el('line', {x1:xg, x2:xg, y1:padTop, y2:priceH - 4, stroke:'#000',
+      'stroke-width':0.5, 'stroke-dasharray':'1 3'}));
+  });
+
+  // 价格与昨收之间的区域填斜纹
+  const line = rel.map((v, i) => x(i) + ',' + y(v)).join(' ');
+  svg.appendChild(el('polygon', {points:x(0) + ',' + y(1) + ' ' + line + ' ' +
+    x(rel.length - 1) + ',' + y(1), fill:'url(#hatch)', stroke:'none'}));
+
+  // 昨收基准线
+  svg.appendChild(el('line', {x1:padX, x2:w - padX, y1:y(1), y2:y(1), stroke:'#000',
+    'stroke-width':0.7, 'stroke-dasharray':'3 2'}));
+
+  // 均价线（虚线）
+  svg.appendChild(el('polyline', {points:avg.map((v, i) => x(i) + ',' + y(v)).join(' '),
+    fill:'none', stroke:'#000', 'stroke-width':1, 'stroke-dasharray':'2.5 2'}));
+
+  // 价格线（实线）
+  svg.appendChild(el('polyline', {points:line, fill:'none', stroke:'#000',
+    'stroke-width':1.5, 'stroke-linejoin':'round'}));
+
+  // 成交量
+  svg.appendChild(el('line', {x1:0, x2:w, y1:volTop - 3, y2:volTop - 3, stroke:'#000',
+    'stroke-width':0.6}));
+  const bw = (w - padX * 2) / vol.length;
+  vol.forEach(function(v, i){
+    const bh = v / volMax * volH;
+    svg.appendChild(el('rect', {x:x(i), y:volTop + volH - bh, width:Math.max(0.8, bw * 0.62),
+      height:bh, fill:'#000'}));
+  });
+
+  // 时间轴
+  const times = ['09:30', '10:30', '11:30/13:00', '14:00', '15:00'];
+  times.forEach(function(t, i){
+    const tx = padX + (i / (times.length - 1)) * (w - padX * 2);
+    const node = el('text', {x:tx, y:labelY, 'font-size':8, fill:'#000', 'font-family':FONT,
+      'text-anchor': i === 0 ? 'start' : (i === times.length - 1 ? 'end' : 'middle')});
+    node.textContent = t;
+    svg.appendChild(node);
+  });
+
+  // 左上 / 左下角标最大最小涨跌幅
+  const fmt = v => ((v - 1) * 100).toFixed(2) + '%';
+  const t1 = el('text', {x:padX + 1, y:padTop + 7, 'font-size':8, fill:'#000', 'font-family':FONT});
+  t1.textContent = '+' + fmt(hi);
+  svg.appendChild(t1);
+  const t2 = el('text', {x:padX + 1, y:priceH - 4, 'font-size':8, fill:'#000', 'font-family':FONT});
+  t2.textContent = fmt(lo);
+  svg.appendChild(t2);
+}
+
+document.querySelectorAll('.trend').forEach(function(svg){
+  drawMini(svg, +svg.dataset.seed, +svg.dataset.pct);
+});
+document.querySelectorAll('.p3chart').forEach(function(svg){
+  drawFull(svg, +svg.dataset.seed, +svg.dataset.pct);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# 官方示例包（约 680 MB，可重新下载，见 references/DOWNLOAD.md）
+references/official/
+references/_archives/
+
+# 3D 模型体积较大
+references/datasheets/*.rar
+
+# 构建产物
+build/
+managed_components/
+sdkconfig.old

@@ -1,0 +1,5 @@
+源页面: https://docs.waveshare.net/ESP32-S3-RLCD-4.2/Resources-And-Documents
+抓取日期: 2026-09-26（纯文本提取，不含图片；图片请见官方页面）
+============================================================
+
+相关资料 1. 示例程序 ​ ESP32-S3-RLCD-4.2 示例程序 ESP32-S3-RLCD-4.2 示例程序（GitHub 仓库） 2. 硬件资料 ​ ESP32-S3-RLCD-4.2 原理图 ESP32-S3-RLCD-4.2 结构与尺寸 3. 技术手册 ​ ESP32-S3 芯片官方手册 技术规格书： 中文版 | 英文版 技术参考手册： 中文版 | 英文版 数据手册 ST7305 数据手册 ES8311 数据手册 PCF85063 数据手册 SHTC3 数据手册 4. 社区示例展示 ​ 信息 查看社区创建的精彩项目！请注意，这些项目由其创建者独立维护。 会说话的桌面 AI 助手（番茄钟/备忘录/音乐） ​ Bilibili: https://www.bilibili.com/video/BV1PsfhBCEqA GitHub: https://github.com/ZhouhaoJiang/xiaozhi-esp32 外壳模型: MakerWorld
