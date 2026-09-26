@@ -642,38 +642,50 @@ static bool arr_f(const char *s, const char *e, int idx, float *out)
 
 bool wesr_parse_minute_meta(const char *json, wesr_minute_meta_t *meta)
 {
-    if (!json || !meta) return false;
+    /* 空/NULL 视为非法输入；能扫但没带 qt/market 的响应不算错（返回 true，字段留空） */
+    if (!json || !json[0] || !meta) return false;
     memset(meta, 0, sizeof *meta);
 
-    /* 快照：qt 段里第一对 [ ] */
+    /* 快照：qt 段里第一对"能解析出快照"的 [ ]。
+       实测响应里 "v_ff_<code>":[] 这个空数组排在最前面，直接取第一个 [ 会拿到空数组。 */
     const char *qt = strstr(json, "\"qt\"");
     if (qt) {
-        const char *b = strchr(qt, '[');
-        const char *e = b ? strchr(b, ']') : NULL;
-        float last = 0, prev = 0;
-        if (b && e && arr_f(b, e, 3, &last) && arr_f(b, e, 4, &prev) && last > 0 && prev > 0) {
-            meta->quote.last = last;
-            meta->quote.prev_close = prev;
-            arr_f(b, e, 5, &meta->quote.open);
-            arr_f(b, e, 31, &meta->quote.chg);
-            arr_f(b, e, 32, &meta->quote.chg_pct);
-            arr_f(b, e, 33, &meta->quote.high);
-            arr_f(b, e, 34, &meta->quote.low);
-            meta->quote.valid = true;
-            meta->has_quote = true;
+        const char *p = qt;
+        while ((p = strchr(p, '[')) != NULL) {
+            const char *e = strchr(p, ']');
+            if (!e) break;
+            float last = 0, prev = 0;
+            if (arr_f(p, e, 3, &last) && arr_f(p, e, 4, &prev) && last > 0 && prev > 0) {
+                meta->quote.last = last;
+                meta->quote.prev_close = prev;
+                arr_f(p, e, 5, &meta->quote.open);
+                arr_f(p, e, 31, &meta->quote.chg);
+                arr_f(p, e, 32, &meta->quote.chg_pct);
+                arr_f(p, e, 33, &meta->quote.high);
+                arr_f(p, e, 34, &meta->quote.low);
+                meta->quote.valid = true;
+                meta->has_quote = true;
+                break;
+            }
+            p = e + 1;
         }
     }
 
-    /* 市场状态："market":[ "...|SH_close_...|..." ] */
+    /* 市场状态："market":[ "...|SH_close_...|..." ]。
+       这串有 25 个市场、约 600 字节，不要复制到定长缓冲（会截断），直接在区间内扫。 */
     const char *mk = strstr(json, "\"market\"");
     if (mk) {
         const char *b = strchr(mk, '[');
         const char *e = b ? strchr(b, ']') : NULL;
-        char seg[512];
-        if (b && e && array_str(b, e, 0, seg, sizeof seg)) {
-            const char *sh = strstr(seg, "|SH_");
-            if (!sh) sh = strstr(seg, "|SZ_");
-            if (sh) meta->closed = (strncmp(sh + 4, "close", 5) == 0);
+        if (b && e) {
+            const char *hit = NULL;
+            for (const char *q = b; q + 4 <= e; q++) {
+                if (memcmp(q, "|SH_", 4) == 0 || memcmp(q, "|SZ_", 4) == 0) {
+                    hit = q;
+                    break;
+                }
+            }
+            if (hit && hit + 4 + 5 <= e) meta->closed = (strncmp(hit + 4, "close", 5) == 0);
         }
     }
     return true;
@@ -1554,7 +1566,7 @@ void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
     /* 每个点的 x 与 y */
     int y_line[WESR_MAX_POINTS];
     int xs[WESR_MAX_POINTS];
-    if (m->n > 400) return;
+    if (m->n > WESR_MAX_POINTS) return;      /* 守住数组边界（解析器本来就封顶 300） */
     for (uint16_t i = 0; i < m->n; i++) {
         float r = m->pts[i].price / prev_close;
         int idx = wesr_minute_index(m->pts[i].hhmm);
@@ -1566,8 +1578,24 @@ void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
         y_line[i] = y;
     }
 
-    /* 涨/跌面积：斜纹 */
-    if (o->hatch) wesr_bmp_hatch45(b, y_line, xs[0], xs[m->n - 1], y_base, 4, 1);
+    /* 涨/跌面积：斜纹。
+       注意 y_line 是按"点"存的，而 hatch45 按"列"取 y；点数少时列数远大于点数，
+       直接传 y_line 会越界读。这里先按列线性插值出一份稠密的逐列 y（最大 400 列）。 */
+    if (o->hatch) {
+        if (b->w > 400) return;
+        int col_y[400];
+        int x_l = xs[0], x_r = xs[m->n - 1];
+        uint16_t seg = 0;
+        for (int x = x_l; x <= x_r; x++) {
+            while (seg + 1 < m->n && x > xs[seg + 1]) seg++;
+            if (seg + 1 >= m->n) { col_y[x - x_l] = y_line[m->n - 1]; continue; }
+            int x0 = xs[seg], x1 = xs[seg + 1];
+            int y0 = y_line[seg], y1 = y_line[seg + 1];
+            int dx = x1 - x0;
+            col_y[x - x_l] = (dx <= 0) ? y1 : (y0 + (y1 - y0) * (x - x0) / dx);
+        }
+        wesr_bmp_hatch45(b, col_y, x_l, x_r, y_base, 4, 1);
+    }
 
     /* 昨收基准线（3 on / 2 off） */
     wesr_bmp_dash_hline(b, x0, x1, y_base, 3, 2);
@@ -1607,7 +1635,7 @@ void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
 - [ ] **Step 4: 跑测试**
 
 Run: `cd firmware; mingw32-make -C test run`
-Expected: PASS（若 `test_chart_render` 的留白/虚线断言失败，先改测试里的阈值常数而不是改实现 —— 这些阈值是"设计意图"的量化）
+Expected: PASS（断言失败**一律先查实现**：这些阈值是设计意图的量化，放松阈值会把真 bug 掩盖掉；查不出原因就报 BLOCKED，不要改断言）
 
 - [ ] **Step 5: Commit**
 
