@@ -288,7 +288,7 @@ clean:
 	rm -rf build
 ```
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: FAIL —— `undefined reference to wesr_parse_quote_line`（函数还没写）
 
 - [ ] **Step 5: 实现解析**
@@ -362,7 +362,7 @@ bool wesr_parse_quote_line(const char *line, wesr_quote_t *q)
 
 - [ ] **Step 6: 跑测试**
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: PASS，打印 `all logic tests passed`
 
 - [ ] **Step 7: 加异常用例（边界规则 8）**
@@ -382,7 +382,7 @@ static void test_quote_rejects_bad(void)
 
 并在 `main()` 里加 `test_quote_rejects_bad();`。
 
-Run: `make -C test run`
+Run: `mingw32-make -C test run`
 Expected: PASS
 
 - [ ] **Step 8: Commit**
@@ -456,7 +456,7 @@ static void test_minute_rejects_bad(void)
 
 并在 `main()` 里加两行调用。
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: FAIL —— `undefined reference to wesr_parse_minute_json`
 
 - [ ] **Step 3: 实现解析**
@@ -531,7 +531,7 @@ bool wesr_parse_minute_json(const char *json, wesr_minute_t *out)
 
 - [ ] **Step 4: 跑测试**
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -594,7 +594,7 @@ static void test_minute_meta(void)
 }
 ```
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: FAIL —— `undefined reference to wesr_parse_minute_meta`
 
 - [ ] **Step 3: 实现**
@@ -682,7 +682,7 @@ bool wesr_parse_minute_meta(const char *json, wesr_minute_meta_t *meta)
 
 - [ ] **Step 4: 跑测试**
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -843,7 +843,7 @@ void wesr_make_marks(wesr_stock_cfg_t *list, int n)
 
 - [ ] **Step 4: 跑测试**
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -952,7 +952,7 @@ bool wesr_in_trading(uint16_t hhmm)
 
 - [ ] **Step 4: 跑测试**
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1091,7 +1091,7 @@ uint8_t wesr_nav_group_start(const wesr_nav_t *n)
 
 - [ ] **Step 4: 跑测试**
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1244,7 +1244,7 @@ void wesr_sched_result(wesr_sched_t *s, bool ok, uint32_t now_ms)
 
 - [ ] **Step 4: 跑测试**
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -1421,7 +1421,7 @@ static void test_chart_render(void)
 }
 ```
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: FAIL —— `undefined reference to wesr_bmp_init`
 
 - [ ] **Step 3: 实现**
@@ -1602,7 +1602,7 @@ void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
 
 - [ ] **Step 4: 跑测试**
 
-Run: `cd firmware; make -C test run`
+Run: `cd firmware; mingw32-make -C test run`
 Expected: PASS（若 `test_chart_render` 的留白/虚线断言失败，先改测试里的阈值常数而不是改实现 —— 这些阈值是"设计意图"的量化）
 
 - [ ] **Step 5: Commit**
@@ -1751,7 +1751,7 @@ esp_err_t wesr_cfg_save(const wesr_app_cfg_t *cfg)
 
 - [ ] **Step 4: 跑测试 + 编译**
 
-Run: `cd firmware; make -C test run && idf.py build`
+Run: `cd firmware; mingw32-make -C test run && idf.py build`
 Expected: 测试 PASS；固件编译通过
 
 - [ ] **Step 5: Commit**
