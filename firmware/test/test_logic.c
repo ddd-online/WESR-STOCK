@@ -173,6 +173,51 @@ static void test_map_and_time(void)
     assert(!wesr_in_trading(900));
 }
 
+static void test_nav(void)
+{
+    wesr_nav_t n;
+    wesr_nav_init(&n, 8);
+    assert(n.page == 1 && n.group == 0 && n.idx == 0);
+    for (int i = 0; i < 5; i++) wesr_nav_click(&n);
+    assert(n.page == 2);                     /* 1→2→3→4→1→2 */
+
+    wesr_nav_init(&n, 8);
+    wesr_nav_double(&n);
+    assert(n.page == 1 && n.group == 0);     /* 第 1 页双击无动作 */
+    wesr_nav_click(&n); wesr_nav_click(&n);  /* 到第 3 页 */
+    assert(n.page == 3);
+    wesr_nav_double(&n);
+    assert(n.idx == 1 && n.page == 3);       /* 第 3 页换股、不跳页 */
+    for (int i = 0; i < 7; i++) wesr_nav_double(&n);
+    assert(n.idx == 0);                      /* 8 只回绕 */
+
+    wesr_nav_init(&n, 8);
+    wesr_nav_click(&n);                      /* 第 2 页 */
+    assert(wesr_nav_group_start(&n) == 0);
+    wesr_nav_double(&n);
+    assert(n.group == 1 && wesr_nav_group_start(&n) == 4);
+    wesr_nav_double(&n);
+    assert(n.group == 0);
+
+    wesr_nav_init(&n, 3);                    /* 只有 3 只：组 2 不存在 */
+    wesr_nav_click(&n);
+    wesr_nav_double(&n);
+    assert(n.group == 0);                    /* 规则 3：双击无效 */
+
+    wesr_nav_init(&n, 8);
+    wesr_nav_click(&n); wesr_nav_double(&n); /* 切到组 2 */
+    wesr_nav_set_count(&n, 5);               /* 配置变小：组 2 仍有 1 只 */
+    assert(n.group == 1 && wesr_nav_group_start(&n) == 4);
+    wesr_nav_set_count(&n, 4);               /* 组 2 没了 */
+    assert(n.group == 0);
+    wesr_nav_set_count(&n, 2);               /* idx 越界要截断 */
+    assert(n.idx <= 1);
+    wesr_nav_set_count(&n, 0);
+    assert(n.idx == 0 && n.group == 0);
+    wesr_nav_double(&n);                     /* 规则 2：0 只时双击无动作 */
+    assert(n.idx == 0);
+}
+
 int main(void)
 {
     test_quote();
@@ -183,6 +228,7 @@ int main(void)
     test_fmt();
     test_marks();
     test_map_and_time();
+    test_nav();
     printf("all logic tests passed\n");
     return 0;
 }

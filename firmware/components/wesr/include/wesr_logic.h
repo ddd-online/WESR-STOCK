@@ -55,3 +55,11 @@ void wesr_make_marks(wesr_stock_cfg_t *list, int n);
 int  wesr_minute_index(uint16_t hhmm);
 int  wesr_index_to_x(int idx, int x0, int x1);
 bool wesr_in_trading(uint16_t hhmm);
+
+typedef struct { uint8_t page, group, idx, count; } wesr_nav_t;
+void    wesr_nav_init(wesr_nav_t *n, uint8_t count);
+void    wesr_nav_click(wesr_nav_t *n);
+void    wesr_nav_double(wesr_nav_t *n);
+void    wesr_nav_set_count(wesr_nav_t *n, uint8_t count);
+uint8_t wesr_nav_group_start(const wesr_nav_t *n);
+uint8_t wesr_nav_pages(void);
