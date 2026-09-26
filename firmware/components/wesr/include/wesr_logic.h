@@ -37,3 +37,11 @@ typedef struct {
 
 bool wesr_parse_quote_line(const char *line, wesr_quote_t *q);
 bool wesr_parse_minute_json(const char *json, wesr_minute_t *out);
+
+typedef struct {
+    bool has_quote;          /* qt 数组解析成功 */
+    wesr_quote_t quote;      /* 现价/昨收等，从 qt 数组按快照下标取 */
+    bool closed;             /* 服务端 market 字段说休市 */
+} wesr_minute_meta_t;
+
+bool wesr_parse_minute_meta(const char *json, wesr_minute_meta_t *meta);

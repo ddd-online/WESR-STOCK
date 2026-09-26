@@ -82,12 +82,33 @@ static void test_minute_rejects_bad(void)
     assert(fabsf(m.pts[0].vol - 5.0f) < 0.01f);
 }
 
+static void test_minute_meta(void)
+{
+    char *raw = read_file("test/fixtures/minute_sh600519.json");
+    wesr_minute_meta_t meta;
+    assert(wesr_parse_minute_meta(raw, &meta));
+    assert(meta.has_quote);
+    assert(fabsf(meta.quote.last - 1237.00f) < 0.01f);       /* qt 数组下标 3 */
+    assert(fabsf(meta.quote.prev_close - 1251.24f) < 0.01f); /* 下标 4 → 昨收 */
+    assert(fabsf(meta.quote.open - 1250.01f) < 0.01f);       /* 下标 5 */
+    assert(meta.closed);                                    /* 实测抓到的就是休市 */
+
+    /* 没有 market / 没有 qt 时不崩，has_quote=false */
+    assert(wesr_parse_minute_meta("{\"data\":{\"x\":{\"data\":{\"data\":[],\"date\":\"20260924\"}}}}",
+                                  &meta));
+    assert(!meta.has_quote);
+    assert(!meta.closed);
+    assert(!wesr_parse_minute_meta("", &meta));
+    free(raw);
+}
+
 int main(void)
 {
     test_quote();
     test_quote_rejects_bad();
     test_minute();
     test_minute_rejects_bad();
+    test_minute_meta();
     printf("all logic tests passed\n");
     return 0;
 }
