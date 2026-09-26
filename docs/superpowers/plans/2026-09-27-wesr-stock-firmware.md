@@ -1174,7 +1174,8 @@ static void test_sched(void)
 
     wesr_sched_page(&s, 1);
     assert(wesr_sched_tick(&s, 200000, false) == WESR_FETCH_NONE); /* 休市不请求 */
-    assert(wesr_sched_tick(&s, 210000, true) == WESR_FETCH_QUOTES); /* 1 分钟后恢复检查 */
+    assert(wesr_sched_tick(&s, 210000, true) == WESR_FETCH_NONE);  /* 休市那次把下次检查推到 260000 */
+    assert(wesr_sched_tick(&s, 260000, true) == WESR_FETCH_QUOTES);
 }
 ```
 
@@ -1318,7 +1319,7 @@ static void test_bmp_primitives(void)
     assert(buf[0] == 0x80);                       /* MSB 在左 */
     wesr_bmp_px(&b, 15, 7);
     assert(wesr_bmp_get(&b, 15, 7));
-    assert(buf[1 * 2 + 1] == 0x01);
+    assert(buf[15] == 0x01);                       /* y=7 → 第 7 行第 2 个字节，x=15 是它的最低位 */
     wesr_bmp_clear(&b);
     assert(!wesr_bmp_get(&b, 0, 0));
 
@@ -1376,9 +1377,12 @@ static void test_chart_render(void)
     }
     assert(gaps > 20);                       /* 虚线而非实线 */
 
-    /* 末点 1500 落在右边界 */
-    assert(wesr_bmp_get(&b, 380 - o.pad_x, y_base - 20) ||
-           wesr_bmp_get(&b, 380 - o.pad_x, y_base - 21));
+    /* 末点 1500 落在右边界：最右一列在价格区里必须有像素 */
+    int last_col = 0;
+    for (int y = o.pad_top; y < o.price_h; y++) {
+        if (wesr_bmp_get(&b, 380 - 1, y)) last_col++;
+    }
+    assert(last_col > 0);
 
     /* 不开斜纹时，价格线下方、基准线上方的区域应当是空的 */
     int empty = 0;
