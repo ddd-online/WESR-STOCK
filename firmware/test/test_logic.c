@@ -102,6 +102,51 @@ static void test_minute_meta(void)
     free(raw);
 }
 
+static void test_fmt(void)
+{
+    char b[32];
+    wesr_fmt_price(b, sizeof b, 1682.5f, true);
+    assert(strcmp(b, "1682.50") == 0);
+    wesr_fmt_price(b, sizeof b, 0.0f, false);
+    assert(strcmp(b, "\xE2\x80\x94") == 0);                 /* — */
+    wesr_fmt_pct(b, sizeof b, 0.0f, true);
+    assert(strcmp(b, "0.00%") == 0);                        /* 平盘不带箭头 */
+    wesr_fmt_pct(b, sizeof b, 0.844f, true);
+    assert(strcmp(b, "\xE2\x96\xB2""0.84%") == 0);          /* ▲0.84% */
+    wesr_fmt_pct(b, sizeof b, -1.244f, true);
+    assert(strcmp(b, "\xE2\x96\xBC""1.24%") == 0);          /* ▼1.24% */
+    wesr_fmt_pct(b, sizeof b, -1.0f, false);
+    assert(strcmp(b, "\xE2\x80\x94") == 0);
+    assert(wesr_price_font_px(1682.5f) == 12);              /* 整数 4 位 → 降档 */
+    assert(wesr_price_font_px(41.03f) == 14);
+    assert(wesr_price_font_px(12345.6f) == 12);
+    wesr_fmt_price(b, sizeof b, 4012.88f, true);
+    assert(strcmp(b, "4012.88") == 0);
+}
+
+static void test_marks(void)
+{
+    char b[16];
+    wesr_first_char("贵州茅台", b, sizeof b);
+    assert(strcmp(b, "贵") == 0);
+    wesr_first_char("hs300", b, sizeof b);
+    assert(strcmp(b, "h") == 0);
+    wesr_first_char("", b, sizeof b);
+    assert(strcmp(b, "") == 0);
+
+    wesr_stock_cfg_t list[4] = {
+        {.code = "sh600519", .name = "贵州茅台"},
+        {.code = "sz300750", .name = "宁德时代"},
+        {.code = "sh601318", .name = "中国平安"},
+        {.code = "sh601601", .name = "中国太保"},   /* 与上一只撞首字 */
+    };
+    wesr_make_marks(list, 4);
+    assert(strcmp(list[0].mark, "贵") == 0);
+    assert(strcmp(list[1].mark, "宁") == 0);
+    assert(strcmp(list[2].mark, "中") == 0);
+    assert(strcmp(list[3].mark, "中国") == 0);      /* 冲突 → 前两个字 */
+}
+
 int main(void)
 {
     test_quote();
@@ -109,6 +154,8 @@ int main(void)
     test_minute();
     test_minute_rejects_bad();
     test_minute_meta();
+    test_fmt();
+    test_marks();
     printf("all logic tests passed\n");
     return 0;
 }

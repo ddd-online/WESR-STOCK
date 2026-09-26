@@ -45,3 +45,9 @@ typedef struct {
 } wesr_minute_meta_t;
 
 bool wesr_parse_minute_meta(const char *json, wesr_minute_meta_t *meta);
+
+void wesr_fmt_price(char *out, size_t cap, float v, bool valid);
+void wesr_fmt_pct(char *out, size_t cap, float pct, bool valid);
+int  wesr_price_font_px(float v);
+void wesr_first_char(const char *utf8, char *out, size_t cap);
+void wesr_make_marks(wesr_stock_cfg_t *list, int n);
