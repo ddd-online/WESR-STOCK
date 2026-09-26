@@ -1,0 +1,39 @@
+#pragma once
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#define WESR_MAX_STOCKS 8
+#define WESR_MAX_POINTS 300
+#define WESR_CODE_LEN   12
+#define WESR_NAME_LEN   32
+#define WESR_MARK_LEN   10
+
+typedef struct {
+    char code[WESR_CODE_LEN];
+    char name[WESR_NAME_LEN];
+    char mark[WESR_MARK_LEN];
+} wesr_stock_cfg_t;
+
+typedef struct {
+    float last, prev_close, open, high, low, chg, chg_pct;
+    uint32_t vol_hands;
+    uint64_t stamp;          /* yyyymmddHHMMSS，放不进 uint32 */
+    bool valid;
+} wesr_quote_t;
+
+typedef struct {
+    uint16_t hhmm;
+    float price, avg;
+    float vol;               /* 本分钟成交量（手）= 累计量差值，画量柱用 */
+} wesr_point_t;
+
+typedef struct {
+    wesr_point_t pts[WESR_MAX_POINTS];
+    uint16_t n;
+    uint32_t day;            /* 接口返回的 yyyymmdd */
+    bool valid;
+} wesr_minute_t;
+
+bool wesr_parse_quote_line(const char *line, wesr_quote_t *q);
+bool wesr_parse_minute_json(const char *json, wesr_minute_t *out);
