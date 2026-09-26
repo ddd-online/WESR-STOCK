@@ -47,10 +47,47 @@ static void test_quote_rejects_bad(void)
     assert(!wesr_parse_quote_line("v_x=\"1~x~x~-1~10~10\";", &q));        /* 负价 */
 }
 
+static void test_minute(void)
+{
+    char *raw = read_file("test/fixtures/minute_sh600519.json");
+    wesr_minute_t m;
+    assert(wesr_parse_minute_json(raw, &m));
+    assert(m.valid);
+    assert(m.day == 20260924u);
+    assert(m.n == 267);                       /* 实测点数，不是 240 */
+    assert(m.pts[0].hhmm == 930);
+    assert(fabsf(m.pts[0].price - 1250.01f) < 0.01f);
+    assert(fabsf(m.pts[0].avg - 1250.01f) < 0.05f);   /* 首点均价 = 价格，自校验公式 */
+    assert(fabsf(m.pts[0].vol - 183.0f) < 0.5f);      /* 首点累计量就是它自己的量 */
+    assert(fabsf(m.pts[1].vol - (1393.0f - 183.0f)) < 0.5f);  /* 后面各点是差值 */
+    assert(m.pts[m.n - 1].hhmm == 1530);
+    assert(fabsf(m.pts[m.n - 1].price - 1237.00f) < 0.01f);
+    free(raw);
+}
+
+static void test_minute_rejects_bad(void)
+{
+    wesr_minute_t m;
+    assert(!wesr_parse_minute_json("", &m));
+    assert(!wesr_parse_minute_json("{\"code\":-1,\"msg\":\"code param error\"}", &m));
+    assert(!wesr_parse_minute_json("{\"data\":{\"sh600519\":{\"data\":{\"data\":[],\"date\":\"20260924\"}}}}",
+                                   &m));   /* 空数组 = 无数据 */
+    /* 累计量为 0 的点必须被跳过，不能算出 inf/nan 的均价 */
+    assert(wesr_parse_minute_json(
+        "{\"data\":{\"x\":{\"data\":{\"data\":[\"0930 10.00 0 0\",\"0931 10.10 5 5050.00\"],"
+        "\"date\":\"20260924\"}}}}", &m));
+    assert(m.n == 1);
+    assert(m.pts[0].hhmm == 931);
+    assert(fabsf(m.pts[0].avg - 10.10f) < 0.01f);
+    assert(fabsf(m.pts[0].vol - 5.0f) < 0.01f);
+}
+
 int main(void)
 {
     test_quote();
     test_quote_rejects_bad();
+    test_minute();
+    test_minute_rejects_bad();
     printf("all logic tests passed\n");
     return 0;
 }
