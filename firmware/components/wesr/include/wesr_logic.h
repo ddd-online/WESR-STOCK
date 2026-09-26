@@ -76,3 +76,28 @@ void         wesr_sched_init(wesr_sched_t *s, uint16_t interval_s);
 void         wesr_sched_page(wesr_sched_t *s, uint8_t page);
 wesr_fetch_t wesr_sched_tick(wesr_sched_t *s, uint32_t now_ms, bool trading);
 void         wesr_sched_result(wesr_sched_t *s, bool ok, uint32_t now_ms);
+
+/* 1bpp 位图：行按 (w+7)/8 字节对齐，MSB 在左 */
+typedef struct { uint8_t *buf; int w, h, stride; } wesr_bmp_t;
+void wesr_bmp_init(wesr_bmp_t *b, uint8_t *buf, int w, int h);
+void wesr_bmp_clear(wesr_bmp_t *b);
+void wesr_bmp_px(wesr_bmp_t *b, int x, int y);
+bool wesr_bmp_get(const wesr_bmp_t *b, int x, int y);
+void wesr_bmp_hline(wesr_bmp_t *b, int x0, int x1, int y);
+void wesr_bmp_line(wesr_bmp_t *b, int x0, int y0, int x1, int y1);
+void wesr_bmp_dash_hline(wesr_bmp_t *b, int x0, int x1, int y, int on, int off);
+void wesr_bmp_vbar(wesr_bmp_t *b, int x, int w, int y_top, int y_bot);
+void wesr_bmp_hatch45(wesr_bmp_t *b, const int *y_line, int x0, int x1, int y_base,
+                      int period, int on);
+
+typedef struct {
+    int  pad_top, pad_bottom, pad_x;
+    int  price_h;            /* 价格区高度 */
+    int  vol_top, vol_h;     /* 成交量条：vol_h = 0 表示不画 */
+    bool hatch;              /* 价格与昨收之间填斜纹 */
+    bool grid;               /* 10:30 / 11:30·13:00 / 14:00 竖虚线 */
+    float span_ratio;        /* 纵轴留白系数，用 1.1；<=0 时按 1.1 */
+} wesr_chart_opts_t;
+
+void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
+                       const wesr_chart_opts_t *o);

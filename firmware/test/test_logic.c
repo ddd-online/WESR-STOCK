@@ -257,6 +257,122 @@ static void test_sched(void)
     assert(wesr_sched_tick(&s, 260000, true) == WESR_FETCH_QUOTES);
 }
 
+static void test_bmp_primitives(void)
+{
+    uint8_t buf[8 * 2] = {0};
+    wesr_bmp_t b;
+    wesr_bmp_init(&b, buf, 16, 8);
+    assert(b.stride == 2);
+    wesr_bmp_px(&b, 0, 0);
+    assert(wesr_bmp_get(&b, 0, 0));
+    assert(buf[0] == 0x80);                       /* MSB 在左 */
+    wesr_bmp_px(&b, 15, 7);
+    assert(wesr_bmp_get(&b, 15, 7));
+    assert(buf[15] == 0x01);                      /* y=7 → 第 7 行第 2 字节，x=15 是它的最低位 */
+    wesr_bmp_clear(&b);
+    assert(!wesr_bmp_get(&b, 0, 0));
+
+    wesr_bmp_hline(&b, 2, 5, 3);
+    for (int x = 2; x <= 5; x++) assert(wesr_bmp_get(&b, x, 3));
+    assert(!wesr_bmp_get(&b, 6, 3));
+    wesr_bmp_clear(&b);
+
+    wesr_bmp_line(&b, 0, 0, 7, 7);                 /* 对角线 */
+    for (int i = 0; i <= 7; i++) assert(wesr_bmp_get(&b, i, i));
+    wesr_bmp_clear(&b);
+
+    wesr_bmp_dash_hline(&b, 0, 9, 5, 3, 2);        /* on 3 off 2 */
+    for (int x = 0; x < 10; x++) {
+        bool want = (x % 5) < 3;
+        assert(wesr_bmp_get(&b, x, 5) == want);
+    }
+    wesr_bmp_clear(&b);
+
+    wesr_bmp_vbar(&b, 3, 2, 4, 7);
+    assert(wesr_bmp_get(&b, 3, 4) && wesr_bmp_get(&b, 4, 7));
+    assert(!wesr_bmp_get(&b, 5, 4));
+}
+
+static void test_chart_render(void)
+{
+    static uint8_t buf[(380 * 168 + 7) / 8];
+    wesr_bmp_t b;
+    wesr_bmp_init(&b, buf, 380, 168);
+
+    wesr_minute_t m = {0};
+    m.n = 3;
+    m.day = 20260924u;
+    m.valid = true;
+    m.pts[0] = (wesr_point_t){ .hhmm = 930,  .price = 10.00f, .avg = 10.00f, .vol = 10 };
+    m.pts[1] = (wesr_point_t){ .hhmm = 1000, .price = 10.50f, .avg = 10.20f, .vol = 30 };
+    m.pts[2] = (wesr_point_t){ .hhmm = 1500, .price = 11.00f, .avg = 10.50f, .vol = 20 };
+
+    wesr_chart_opts_t o = { .pad_top = 8, .pad_bottom = 4, .pad_x = 2,
+                            .price_h = 116, .vol_top = 130, .vol_h = 20,
+                            .hatch = false, .grid = false, .span_ratio = 1.1f };
+    wesr_chart_render(&b, &m, 10.00f, &o);
+
+    /* 昨收基准线（10.00）在价格区里像素最多的那一行，且必须是虚线（有断开） */
+    int y_base = -1;
+    for (int y = o.pad_top; y < o.price_h; y++) {
+        int cnt = 0;
+        for (int x = 0; x < 380; x++) if (wesr_bmp_get(&b, x, y)) cnt++;
+        if (cnt > 100) { y_base = y; break; }
+    }
+    assert(y_base > 0);
+    int gaps = 0;
+    for (int x = 1; x < 380; x++) {
+        if (wesr_bmp_get(&b, x - 1, y_base) && !wesr_bmp_get(&b, x, y_base)) gaps++;
+    }
+    assert(gaps > 20);
+
+    /* 末点 1500 落在右边界那一列（x = w - pad_x） */
+    int last_col = 0;
+    for (int y = o.pad_top; y < o.price_h; y++) {
+        if (wesr_bmp_get(&b, 380 - o.pad_x, y)) last_col++;
+    }
+    assert(last_col > 0);
+
+    /* 不开斜纹时，价格线下方、基准线上方的区域应当是空的 */
+    int empty = 0;
+    for (int x = 10; x < 300; x++)
+        for (int y = y_base + 2; y < y_base + 20; y++)
+            if (!wesr_bmp_get(&b, x, y)) empty++;
+    assert(empty > 1000);
+
+    /* 成交量条区域有像素 */
+    int vol_px = 0;
+    for (int x = 0; x < 380; x++)
+        for (int y = o.vol_top; y < o.vol_top + o.vol_h; y++)
+            if (wesr_bmp_get(&b, x, y)) vol_px++;
+    assert(vol_px > 0);
+
+    /* 只有 3 个点也不崩：右侧大片留白（边界规则 9） */
+    wesr_bmp_clear(&b);
+    o.hatch = true;
+    wesr_chart_render(&b, &m, 10.00f, &o);
+    int right_empty = 0;
+    for (int x = 360; x < 380; x++)
+        for (int y = o.pad_top; y < o.price_h; y++)
+            if (!wesr_bmp_get(&b, x, y)) right_empty++;
+    assert(right_empty > 100);
+
+    /* 斜纹开了以后，价格线上方的区域被斜纹填了一部分但不全填 */
+    int filled = 0, total = 0;
+    for (int x = 20; x < 200; x++) {
+        for (int y = o.pad_top; y < y_base; y++) {
+            if (y < o.pad_top + 4) continue;
+            total++;
+            if (wesr_bmp_get(&b, x, y)) filled++;
+        }
+    }
+    assert(filled > 0 && filled < total);
+
+    /* prev_close = 0 时不能崩：退化成不画 */
+    wesr_bmp_clear(&b);
+    wesr_chart_render(&b, &m, 0.0f, &o);
+}
+
 int main(void)
 {
     test_quote();
@@ -269,6 +385,8 @@ int main(void)
     test_map_and_time();
     test_nav();
     test_sched();
+    test_bmp_primitives();
+    test_chart_render();
     printf("all logic tests passed\n");
     return 0;
 }
