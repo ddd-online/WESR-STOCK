@@ -9,3 +9,11 @@ references/datasheets/*.rar
 build/
 managed_components/
 sdkconfig.old
+
+# 固件里从官方工程裁剪掉、暂时留着备查的部分（Task 1）
+firmware/_pruned/
+# 第三方头文件库（20MB，Bosch/Touch 全量头）；本地保留、不入库，
+# 重建方式见 references/DOWNLOAD.md（从官方 Demo 包 Copy 回来），i2c_equipment.cpp 的 RTC 依赖它
+firmware/components/ExternLib/
+# 字体是本机生成的构建产物（许可原因不入库，用 tools/gen_fonts.ps1 重建）
+firmware/components/wesr/ui/font_*.c

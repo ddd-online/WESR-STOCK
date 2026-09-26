@@ -1,0 +1,26 @@
+idf_component_register(
+    SRCS 
+    "i2c_bsp.cpp" 
+    "display_bsp.cpp" 
+    "sdcard_bsp.cpp" 
+    "./src/multi_button/multi_button.c" 
+    "button_bsp.c"
+    "./i2c_equipment.cpp"
+    "./adc_bsp.cpp"
+    PRIV_REQUIRES 
+    driver
+    # IDF v6 起，具体头文件由 esp_driver_* 组件提供，必须显式声明（v5 时代靠 driver 传递）
+    esp_driver_i2c
+    esp_driver_spi
+    esp_driver_gpio
+    esp_lcd
+    sdmmc
+    SensorLib
+    esp_timer
+    esp_adc
+    REQUIRES
+    esp_driver_sdmmc
+    fatfs
+    INCLUDE_DIRS 
+    "./" 
+    "./src/multi_button")
