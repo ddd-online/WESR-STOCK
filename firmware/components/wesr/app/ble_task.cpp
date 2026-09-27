@@ -9,9 +9,13 @@
    就改成 nimble_port_deinit()，代价是重连状态机得整个重做。 */
 #include "ble_task.h"
 #include "app_state.h"
+#include "cfg_store.h"
+#include "net_task.h"
+#include "quote_service.h"
 #include "wesr_logic.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -23,8 +27,12 @@
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "i2c_equipment.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
+#include <time.h>
 
 #define TAG "ble"
 
@@ -97,7 +105,8 @@ static void rx_feed(const uint8_t *d, uint16_t n)
         (void)len;
         char *cp = strdup(line);
         if (!cp) break;
-        if (xQueueSend(s_q, &cp, 0) != pdTRUE) {   /* 队列满：丢，不阻塞蓝牙 */
+        BaseType_t qr = xQueueSend(s_q, &cp, 0);
+        if (qr != pdTRUE) {                        /* 队列满：丢，不阻塞蓝牙 */
             free(cp);
             break;
         }
@@ -255,17 +264,146 @@ static void ble_worker(void *arg)
     }
 }
 
-/* Task 19 会把其余命令补齐；这里先打通"写进来 → 回包 notify 出去"这条链路。
-   （Task 18 的验收就靠 hello。err 里的 msg 明说还没实现，别让小程序猜。） */
+/* 命令表见 spec §10。解析/校验在 ble_proto.c（宿主机测过），这里只做"执行 + 回包"。 */
+static void reply(char *out, uint16_t cap, int n)
+{
+    if (n > 0) Ble_SendLine(out);
+    else       ESP_LOGW(TAG, "回包装不下（%d 字节）", n);
+}
+
 static void Ble_OnLine(const char *line, char *out, uint16_t cap)
 {
     ESP_LOGI(TAG, "rx %s", line);
+
     if (wesr_ble_cmd_is(line, "hello")) {
-        if (send_status(out, cap) > 0) Ble_SendLine(out);
+        reply(out, cap, send_status(out, cap));
         return;
     }
-    int n = wesr_ble_fmt_err(out, cap, WESR_BLE_E_ARG, "not implemented yet");
-    if (n > 0) Ble_SendLine(out);
+
+    if (wesr_ble_cmd_is(line, "scan")) {
+        static wesr_ap_t aps[12];                 /* spec §10：最多 12 个；static 省栈 */
+        int n = Net_WifiScan(aps, 12);
+        reply(out, cap, wesr_ble_fmt_scan(out, cap, aps, (uint8_t)n));
+        return;
+    }
+
+    if (wesr_ble_cmd_is(line, "getCfg")) {
+        reply(out, cap, wesr_ble_fmt_cfg(out, cap, Quote_Cfg()));
+        return;
+    }
+
+    if (wesr_ble_cmd_is(line, "setWifi")) {
+        /* 用 memcpy 而不是 snprintf("%s") 落盘：长度自己校验过了，省得编译器
+           为"可能截断"报 -Werror=format-truncation */
+        char ssid[96], pass[96];
+        if (!wesr_ble_get_str(line, "ssid", ssid, sizeof ssid) || !ssid[0]) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_SSID, "ssid empty or >32"));
+            return;
+        }
+        size_t sl = strlen(ssid);
+        if (sl > 32) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_SSID, "ssid empty or >32"));
+            return;
+        }
+        if (!wesr_ble_get_str(line, "pass", pass, sizeof pass)) pass[0] = 0;  /* 开放网络 */
+        size_t pl = strlen(pass);
+        if (pl > 64) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_PASS, "pass >64"));
+            return;
+        }
+        wesr_app_cfg_t *c = Quote_Cfg();
+        memcpy(c->ssid, ssid, sl + 1);
+        memcpy(c->pass, pass, pl + 1);
+        if (wesr_cfg_save(c) != ESP_OK) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_NVS, "save failed"));
+            return;
+        }
+        AppState_Lock();
+        memcpy(AppState_Status()->ssid, ssid, sl + 1);
+        AppState_Unlock();
+        ESP_LOGI(TAG, "setWifi %s, connecting…", ssid);
+        if (!Net_WifiConnect(ssid, pass, 20000)) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_WIFI, "connect failed"));
+            return;
+        }
+        Quote_CfgChanged();                       /* 新网通了：立刻重拉行情 */
+        reply(out, cap, wesr_ble_fmt_ack(out, cap, "setWifi"));
+        return;
+    }
+
+    if (wesr_ble_cmd_is(line, "setStocks")) {
+        static wesr_stock_cfg_t list[WESR_MAX_STOCKS];
+        const char *err = NULL;
+        int n = wesr_ble_parse_items(line, list, WESR_MAX_STOCKS, &err);
+        if (n < 0) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, err ? err : WESR_BLE_E_ARG, "bad items"));
+            return;
+        }
+        wesr_app_cfg_t *c = Quote_Cfg();
+        memset(c->stocks, 0, sizeof c->stocks);   /* 只数变少时别留旧名字 */
+        memcpy(c->stocks, list, (size_t)n * sizeof list[0]);
+        c->count = (uint8_t)n;
+        if (wesr_cfg_save(c) != ESP_OK) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_NVS, "save failed"));
+            return;
+        }
+        Quote_CfgChanged();
+        ESP_LOGI(TAG, "setStocks %d 只", n);
+        reply(out, cap, wesr_ble_fmt_ack(out, cap, "setStocks"));
+        return;
+    }
+
+    if (wesr_ble_cmd_is(line, "setInterval")) {
+        long sec = 0;
+        if (!wesr_ble_get_int(line, "sec", &sec) ||
+            (sec != 5 && sec != 15 && sec != 30 && sec != 60)) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_ARG, "sec must be 5/15/30/60"));
+            return;
+        }
+        wesr_app_cfg_t *c = Quote_Cfg();
+        c->refresh_sec = (uint16_t)sec;
+        if (wesr_cfg_save(c) != ESP_OK) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_NVS, "save failed"));
+            return;
+        }
+        Quote_CfgChanged();
+        reply(out, cap, wesr_ble_fmt_ack(out, cap, "setInterval"));
+        return;
+    }
+
+    if (wesr_ble_cmd_is(line, "timeSync")) {
+        long unix_s = 0;
+        if (!wesr_ble_get_int(line, "unix", &unix_s) || unix_s < 1577836800L) {  /* < 2020-01-01 */
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_ARG, "unix out of range"));
+            return;
+        }
+        setenv("TZ", "CST-8", 1);                 /* 和 net_task 一致：板子存本地时间 */
+        tzset();
+        time_t t = (time_t)unix_s;
+        struct tm tm;
+        localtime_r(&t, &tm);
+        Rtc_SetTime((uint16_t)(tm.tm_year + 1900), (uint8_t)(tm.tm_mon + 1),
+                    (uint8_t)tm.tm_mday, (uint8_t)tm.tm_hour, (uint8_t)tm.tm_min,
+                    (uint8_t)tm.tm_sec);
+        struct timeval tv;
+        memset(&tv, 0, sizeof tv);
+        tv.tv_sec = t;
+        settimeofday(&tv, NULL);                  /* 系统时间也跟上，别只写 RTC */
+        ESP_LOGI(TAG, "timeSync -> %04d-%02d-%02d %02d:%02d:%02d",
+                 tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                 tm.tm_hour, tm.tm_min, tm.tm_sec);
+        reply(out, cap, wesr_ble_fmt_ack(out, cap, "timeSync"));
+        return;
+    }
+
+    if (wesr_ble_cmd_is(line, "exit")) {
+        reply(out, cap, wesr_ble_fmt_ack(out, cap, "exit"));
+        vTaskDelay(pdMS_TO_TICKS(300));           /* 先让 ack 发出去，再拆广播和连接 */
+        Quote_NavSetPairing(false);
+        return;
+    }
+
+    reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_ARG, "unknown cmd"));
 }
 
 static int send_status(char *buf, uint16_t cap)
@@ -318,7 +456,24 @@ void Ble_Enable(bool on)
     if (!on) {
         if (ble_gap_adv_active()) ble_gap_adv_stop();
         if (s_conn != BLE_HS_CONN_HANDLE_NONE) ble_gap_terminate(s_conn, 0x13 /* 用户主动断开 */);
-        ESP_LOGI(TAG, "stop advertising");
+        vTaskDelay(pdMS_TO_TICKS(120));              /* 先让断开事件走完再拆栈 */
+        if (s_inited) {
+            /* 必须把栈整个拆掉，不能只停广播：这块板子的内存是硬约束 ——
+               BLE 常驻要 50KB 内部 RAM，而 HTTPS 握手 + 整屏刷新的 SPI DMA
+               凑巧都要 15~40KB 连续内部内存。实测常驻时：
+                 quote: http open failed (28674 ESP_ERR_HTTP_CONNECT)
+                 spicommon_dma_setup_priv_buffer: Failed to allocate priv TX buffer
+               → ESP_ERROR_CHECK → abort → 重启。退出配网就该把 50KB 还回去。 */
+            nimble_port_stop();
+            vTaskDelay(pdMS_TO_TICKS(50));
+            nimble_port_deinit();
+            s_inited = false;
+            s_synced = false;
+            s_subscribed = false;
+            s_conn = BLE_HS_CONN_HANDLE_NONE;
+        }
+        ESP_LOGI(TAG, "stack down, internal free=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         return;
     }
 
@@ -335,9 +490,6 @@ void Ble_Enable(bool on)
         ble_gatts_add_svcs(s_svcs);
         ble_hs_cfg.sync_cb = on_sync;
         ble_hs_cfg.reset_cb = on_reset;
-        s_q = xQueueCreate(4, sizeof(char *));
-        s_tx = xSemaphoreCreateMutex();
-        wesr_ble_rx_reset(&s_rx);
         /* 蓝牙地址：小程序用它区分是哪台板子（固件这边没有别的唯一标识） */
         uint8_t m[6];
         if (esp_read_mac(m, ESP_MAC_BT) == ESP_OK) {
@@ -346,11 +498,22 @@ void Ble_Enable(bool on)
                      "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]);
             AppState_Unlock();
         }
-        xTaskCreate(ble_worker, "ble", 8192, NULL, 4, NULL);
         nimble_port_freertos_init(host_task);
         s_inited = true;
         ESP_LOGI(TAG, "stack up, waiting for sync");
     } else if (s_synced) {
         advertise();                            /* 之前只是停过广播 */
     }
+}
+
+void Ble_Start(void)
+{
+    if (s_q) return;                            /* 幂等 */
+    s_q = xQueueCreate(4, sizeof(char *));
+    s_tx = xSemaphoreCreateMutex();
+    wesr_ble_rx_reset(&s_rx);
+    BaseType_t tc = xTaskCreate(ble_worker, "ble", 8192, NULL, 4, NULL);
+    ESP_LOGI(TAG, "worker task create=%d, internal free=%u largest=%u", (int)tc,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 }

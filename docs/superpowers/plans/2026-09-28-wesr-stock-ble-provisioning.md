@@ -384,3 +384,27 @@ git commit -am "feat(wesr): 配网模式起 NimBLE NUS 外设（NUS UUID 照 spe
 4. 蓝牙只在配网模式开，不做"常连"——省电，且避免和 WiFi 抢天线（S3 单天线共存）。
 
 **类型一致性**：`wesr_ble_status_t` / `wesr_ap_t` 在 Task 17 定义，Task 18/19/20 只用不改名；`Ble_SendLine`（Task 18）与 `Ble_OnLine`（Task 19）成对。
+
+## 实机约束（Task 18/19 踩出来的，改代码前先读）
+
+S3 的内部 SRAM 比想象中紧：LVGL 64KB 静态池 + WiFi/lwIP 65KB + NimBLE 约 50KB，
+而 **HTTPS 握手的 mbedTLS 和整屏刷新的 SPI DMA 各要 15~40KB 连续内部内存**。
+实测数字（`heap_caps_get_free_size(MALLOC_CAP_INTERNAL)`）：
+
+| 时刻 | 内部堆可用 | 后果 |
+| --- | --- | --- |
+| 开机 | 132KB | 正常 |
+| WiFi + 首轮 HTTP 之后（BLE init 前） | 67KB | 正常 |
+| NimBLE init 之后（默认配置） | **1.2KB** | `hci_err=0x207 BLE_ERR_MEM_CAPACITY`，广播都起不来 |
+| NimBLE init 之后（收紧缓冲池配置后） | 17KB | 能广播通信，但 TLS 起不来、整屏刷新可能失败 |
+| 退出配网、拆掉蓝牙栈之后 | 67KB | 恢复正常 |
+
+所以有两个硬性要求：
+
+1. **退出配网必须 `nimble_port_stop()` + `nimble_port_deinit()` 把栈整个拆掉**，不能只停广播 ——
+   否则 HTTPS 一直 `ESP_ERR_HTTP_CONNECT`（TLS 分配不到内存）。
+2. **命令执行任务要在开机早期创建**（`Ble_Start()`，早于 WiFi/NimBLE）—— 等 NimBLE 初始化完
+   就再也拿不出 8KB 任务栈了（`xTaskCreate` 直接 pdFAIL，命令全都没人执行，且不报错）。
+
+另外 `display_bsp.cpp` 的整屏刷新原来是 `ESP_ERROR_CHECK`：配网模式下 DMA 缓冲分配失败会
+直接 abort 重启。现在改成失败重试一次 + 打日志，刷不进最多画面停一帧。

@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 
 from bleak import BleakClient, BleakScanner
 
@@ -95,19 +96,30 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", help="只跑一条命令")
     ap.add_argument("--scan", action="store_true", help="只扫广播")
+    ap.add_argument("--stocks", help="用这份 JSON 数组当 setStocks 的参数（默认 2 只夹具）")
+    ap.add_argument("--addr", help="直接连这个 MAC，跳过扫描（Windows 扫描偶尔抽风时用）")
+    ap.add_argument("--cmd", help="只发这条原始 JSON（例如恢复板子设置：--cmd '{\"cmd\":\"setInterval\",\"sec\":15}'）")
     args = ap.parse_args()
 
-    print("扫描中（8 秒）… 板子要先长按 KEY 3 秒进配网模式")
-    hits = await discover(8.0)
-    for addr, (_, name, uuids) in hits.items():
-        print(f"  找到 {addr}  name={name!r}  services={uuids}")
-    if not hits:
-        print("没扫到 WESR-STOCK：① 板子在配网模式吗（状态条反白）② 蓝牙开了吗")
-        return 1
-    if args.scan:
-        return 0
-
-    addr, (dev, name, _) = next(iter(hits.items()))
+    if args.addr:
+        addr, dev = args.addr, args.addr
+        print(f"直连 {addr}")
+    else:
+        print("扫描中（8 秒）… 板子要先长按 KEY 3 秒进配网模式")
+        hits = {}
+        for i in range(3):                      # Windows 上扫描偶发空手而归
+            hits = await discover(8.0)
+            if hits:
+                break
+            print(f"  第 {i + 1} 次没扫到，重试…")
+        for a, (_, name, uuids) in hits.items():
+            print(f"  找到 {a}  name={name!r}  services={uuids}")
+        if not hits:
+            print("没扫到 WESR-STOCK：① 板子在配网模式吗（状态条反白）② 蓝牙开了吗")
+            return 1
+        if args.scan:
+            return 0
+        addr, (dev, name, _) = next(iter(hits.items()))
     print(f"连接 {addr} …")
     client = await connect(dev)
     if not client:
@@ -123,18 +135,25 @@ async def main():
         else:
             print("  ← 订阅后没等到主动推送（板子固件可能是旧的）")
 
-        steps = [
-            ("hello", {"cmd": "hello"}),
-            ("scan", {"cmd": "scan"}),
-            ("getCfg", {"cmd": "getCfg"}),
-            ("setStocks", {"cmd": "setStocks", "items": [
-                {"code": "sh600519", "name": "贵州茅台"},
-                {"code": "sz000858", "name": "五粮液", "mark": "酒"},
-            ]}),
-            ("setInterval", {"cmd": "setInterval", "sec": 30}),
-            ("timeSync", {"cmd": "timeSync", "unix": 1789000000}),
+        items = json.loads(args.stocks) if args.stocks else [
+            {"code": "sh600519", "name": "贵州茅台"},
+            {"code": "sz000858", "name": "五粮液", "mark": "酒"},
         ]
-        if args.only:
+        if args.cmd:
+            raw = json.loads(args.cmd)
+            steps = [(raw.get("cmd", "?"), raw)]
+        else:
+            steps = [
+                ("hello", {"cmd": "hello"}),
+                ("scan", {"cmd": "scan"}),
+                ("getCfg", {"cmd": "getCfg"}),
+                ("setStocks", {"cmd": "setStocks", "items": items}),
+                ("setInterval", {"cmd": "setInterval", "sec": 30}),
+                # 用手机/PC 的当前时间：板子本来就跟 SNTP 对齐，传假时间会把表拨乱
+                ("timeSync", {"cmd": "timeSync", "unix": int(time.time())}),
+                ("exit", {"cmd": "exit"}),      # 退出配网：板子会拆掉蓝牙栈把内存还回去
+            ]
+        if args.only and not args.cmd:
             steps = [s for s in steps if s[0] == args.only] or [(args.only, {"cmd": args.only})]
 
         ok = fail = 0

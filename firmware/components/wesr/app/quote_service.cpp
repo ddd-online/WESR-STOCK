@@ -26,8 +26,31 @@
 
 #define TAG "quote"
 
-static const wesr_app_cfg_t *s_cfg;
+static wesr_app_cfg_t   *s_cfg;
 static wesr_nav_t            s_nav;            /* 当前页/组/索引（Task 16 起由按键驱动） */
+
+void Quote_SetCfg(wesr_app_cfg_t *cfg) { s_cfg = cfg; }
+
+wesr_app_cfg_t *Quote_Cfg(void)
+{
+    static wesr_app_cfg_t fallback;            /* net_task 还没登记时兜底，别让调用者拿 NULL */
+    if (!s_cfg) wesr_cfg_defaults(&fallback);
+    return s_cfg ? s_cfg : &fallback;
+}
+
+void Quote_CfgChanged(void)
+{
+    AppState_Lock();
+    wesr_nav_set_count(&s_nav, s_cfg->count);          /* 只数变少时把组/索引夹回来 */
+    AppState_Status()->stock_count = s_cfg->count;
+    AppState_Status()->refresh_sec = s_cfg->refresh_sec;
+    /* 作废行情缓存：休市时"按页补一次"的判据就是这两条 valid，清了才会立刻重拉 */
+    AppState_Status()->quotes[0].valid = false;
+    AppState_Status()->minutes[0].valid = false;
+    AppState_Status()->cfg_gen++;
+    AppState_Unlock();
+    Quote_RefreshUi();
+}
 
 void Quote_SetPage(uint8_t page)
 {
@@ -295,7 +318,7 @@ void Quote_RefreshUi(void)
 }
 
 /* ---------- 主循环 ---------- */
-void Quote_Run(const wesr_app_cfg_t *cfg)
+void Quote_Run(wesr_app_cfg_t *cfg)
 {
     s_cfg = cfg;
     wesr_nav_init(&s_nav, cfg->count);
@@ -308,6 +331,7 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
     wesr_sched_init(&sched, cfg->refresh_sec);
     uint8_t last_page = 0, last_group = 0xFF, last_idx = 0xFF;
     bool last_bt = false;
+    uint32_t last_cfg_gen = 0;
 
     /* 开机先补一次：休市/非交易时段本来不发请求，但那样画面上永远是空的；
        设计要的是"休市时显示上一交易日的收盘数据"，所以开机先拉一次快照 + 拉一只分时
@@ -355,6 +379,7 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
         bool bt_now = AppState_Status()->bt_connected;
         /* 换组/换股也要立刻到期：否则休市时下一次网络请求要等一分钟的 idle 重检 */
         uint8_t group = AppState_Status()->group, idx = AppState_Status()->idx;
+        uint32_t cfg_gen = AppState_Status()->cfg_gen;
         AppState_Unlock();
         /* 蓝牙连接状态由 NimBLE 回调写，但回调里不能碰 LVGL（主机任务栈只有 4KB），
            所以顶栏图标在这里跟着刷。 */
@@ -362,9 +387,11 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
         s_nav.page = page;          /* 内部页状态必须跟着走，否则刷新永远刷错页 */
         s_nav.group = group;
         s_nav.idx = idx;
-        if (page != last_page || group != last_group || idx != last_idx) {
+        if (page != last_page || group != last_group || idx != last_idx ||
+            cfg_gen != last_cfg_gen) {
             wesr_sched_page(&sched, page);
-            last_page = page; last_group = group; last_idx = idx;
+            sched.interval_s = s_cfg->refresh_sec ? s_cfg->refresh_sec : 15;
+            last_page = page; last_group = group; last_idx = idx; last_cfg_gen = cfg_gen;
         }
         /* 配网模式 3 分钟无操作自动退出（M4 起这里还会关掉 BLE 广播） */
         AppState_Lock();

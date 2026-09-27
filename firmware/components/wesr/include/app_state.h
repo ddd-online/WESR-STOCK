@@ -30,6 +30,7 @@ typedef struct {
     uint32_t today_fail;
     uint16_t refresh_sec;
     uint8_t  stock_count, page, group, idx;
+    uint32_t cfg_gen;         /* 配置被配网改过的次数：主循环靠它察觉"该重排重拉了" */
     /* 系统 */
     char     fw[16];
     uint32_t uptime_s;

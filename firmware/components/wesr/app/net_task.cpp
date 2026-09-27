@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
@@ -22,6 +23,17 @@
 static EventGroupHandle_t   s_wifi_ev;
 static bool                 s_wifi_inited;
 static bool                 s_have_creds;      /* 没有凭据时不要反复 esp_wifi_connect */
+static SemaphoreHandle_t    s_radio_mtx;       /* 连接与扫描串行化：BLE 配网任务也会调进来 */
+
+static void radio_take(void)
+{
+    if (s_radio_mtx) xSemaphoreTake(s_radio_mtx, portMAX_DELAY);
+}
+
+static void radio_give(void)
+{
+    if (s_radio_mtx) xSemaphoreGive(s_radio_mtx);
+}
 
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -60,19 +72,22 @@ static void wifi_init_once(void)
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                                         wifi_event, NULL, NULL));
     s_wifi_inited = true;
+    s_radio_mtx = xSemaphoreCreateMutex();
 }
 
 bool Net_WifiConnect(const char *ssid, const char *pass, int timeout_ms)
 {
     wifi_init_once();
+    radio_take();
     /* 先把射频起来：没凭据时也要能扫描（配网就看这一步） */
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     esp_err_t e = esp_wifi_start();
     if (e != ESP_OK && e != ESP_ERR_WIFI_STATE) {
         ESP_LOGW(TAG, "wifi start failed: %d", (int)e);
+        radio_give();
         return false;
     }
-    if (!ssid || !ssid[0]) return false;
+    if (!ssid || !ssid[0]) { radio_give(); return false; }
 
     wifi_config_t wc;
     memset(&wc, 0, sizeof wc);
@@ -90,6 +105,7 @@ bool Net_WifiConnect(const char *ssid, const char *pass, int timeout_ms)
                                            pdMS_TO_TICKS(timeout_ms));
     if (!(bits & WIFI_OK_BIT)) {
         ESP_LOGW(TAG, "wifi connect timeout (%s)", ssid);
+        radio_give();
         return false;
     }
     wifi_ap_record_t ap;
@@ -98,6 +114,7 @@ bool Net_WifiConnect(const char *ssid, const char *pass, int timeout_ms)
         AppState_Status()->rssi = ap.rssi;
         AppState_Unlock();
     }
+    radio_give();
     return true;
 }
 
@@ -138,6 +155,7 @@ static void net_task(void *arg)
     static wesr_app_cfg_t cfg;
     AppState_Init();
     wesr_cfg_load(&cfg);                 /* 含 menuconfig 里的 WiFi 凭据 */
+    Quote_SetCfg(&cfg);                  /* 早点登记：BLE 配网可能在 Quote_Run 之前就下发配置 */
     AppState_Lock();
     snprintf(AppState_Status()->ssid, sizeof AppState_Status()->ssid, "%s",
              cfg.ssid[0] ? cfg.ssid : "");
@@ -158,6 +176,15 @@ static void net_task(void *arg)
                  cfg.ssid[0] ? cfg.ssid : "(empty)");
         Net_WifiScanLog();          /* 扫一遍附近网络，和上面的失败原因对照着看 */
         if (!cfg.ssid[0]) break;    /* 没配网就别转圈了，等 M4 配网 */
+        /* 配网可能刚把新凭据写进来、自己连上了：别再用旧凭据跟它打架 */
+        AppState_Lock();
+        bool up = AppState_Status()->wifi_connected;
+        AppState_Unlock();
+        if (up) {
+            ESP_LOGI(TAG, "wifi up (configured over BLE)");
+            Net_TimeSync(15000);
+            break;
+        }
         vTaskDelay(pdMS_TO_TICKS(20000));
     }
     Quote_Run(&cfg);                      /* 行情主循环（内部处理断网/退避） */
@@ -169,40 +196,70 @@ void Net_TaskStart(void)
     xTaskCreate(net_task, "net", 12288, NULL, 4, NULL);
 }
 
-/* 扫描附近的 2.4G 网络并打到串口（ESP32-S3 只支持 2.4G，所以扫到的都是 2.4G）。
-   用途：① v1 配网时看该填哪个 SSID；② M4 小程序配网也要这份列表。 */
-void Net_WifiScanLog(void)
+/* 扫描附近的 2.4G 网络（ESP32-S3 只支持 2.4G，所以扫到的都是 2.4G）。
+   按信号从强到弱返回，跳过隐藏 SSID（小程序里也选不了）。 */
+int Net_WifiScan(wesr_ap_t *out, uint8_t max)
 {
+    if (!out || !max) return 0;
     wifi_init_once();
+    radio_take();
     /* 关键：先关掉"断线自动重连"开关再断——否则事件回调会立刻发起连接，
        扫描永远撞上"正在连接"状态而失败（实测 scan failed）。 */
     bool had_creds = s_have_creds;
     s_have_creds = false;
     esp_wifi_disconnect();
     vTaskDelay(pdMS_TO_TICKS(500));
+
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_err_t se = esp_wifi_start();          /* 已经起来会报 WIFI_STATE，忽略 */
+    (void)se;
+
+    int n_out = 0;
     wifi_scan_config_t sc;
     memset(&sc, 0, sizeof sc);
     sc.show_hidden = true;
     esp_err_t e = esp_wifi_scan_start(&sc, true);
-    if (e != ESP_OK) {
-        ESP_LOGW(TAG, "scan failed: %d", (int)e);
-        s_have_creds = had_creds;
-        return;
-    }
-    uint16_t n = 0;
-    esp_wifi_scan_get_ap_num(&n);
-    if (n > 20) n = 20;
-    if (n == 0) { ESP_LOGW(TAG, "scan: none"); s_have_creds = had_creds; return; }
-    wifi_ap_record_t *recs = (wifi_ap_record_t *)calloc(n, sizeof(wifi_ap_record_t));
-    if (!recs) { s_have_creds = had_creds; return; }
-    if (esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
-        ESP_LOGI(TAG, "scan: %u ap(s), ssid / rssi / auth / ch", (unsigned)n);
-        for (int i = 0; i < n; i++) {
-            ESP_LOGI(TAG, "  %2d) %-24s %4d dBm auth=%d ch=%u", i + 1,
-                     (const char *)recs[i].ssid, recs[i].rssi, (int)recs[i].authmode,
-                     (unsigned)recs[i].primary);
+    if (e == ESP_OK) {
+        uint16_t n = 0;
+        esp_wifi_scan_get_ap_num(&n);
+        if (n > 24) n = 24;
+        wifi_ap_record_t *recs = (wifi_ap_record_t *)calloc(n ? n : 1, sizeof(wifi_ap_record_t));
+        if (recs && n && esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
+            for (int i = 0; i < n; i++) {              /* n ≤ 24，冒泡够了 */
+                for (int j = i + 1; j < n; j++) {
+                    if (recs[j].rssi > recs[i].rssi) {
+                        wifi_ap_record_t t = recs[i];
+                        recs[i] = recs[j];
+                        recs[j] = t;
+                    }
+                }
+            }
+            for (int i = 0; i < n && n_out < max; i++) {
+                const char *ssid = (const char *)recs[i].ssid;
+                if (!ssid[0]) continue;
+                snprintf(out[n_out].ssid, sizeof out[n_out].ssid, "%s", ssid);
+                out[n_out].rssi = (int8_t)recs[i].rssi;
+                n_out++;
+            }
         }
+        free(recs);
+    } else {
+        ESP_LOGW(TAG, "scan failed: %d", (int)e);
     }
-    free(recs);
     s_have_creds = had_creds;
+    if (had_creds) esp_wifi_connect();        /* 扫完把连接接回去 */
+    radio_give();
+    return n_out;
+}
+
+/* 扫描并打到串口：v1 时用来肉眼确认该填哪个 SSID */
+void Net_WifiScanLog(void)
+{
+    static wesr_ap_t aps[20];
+    int n = Net_WifiScan(aps, 20);
+    if (n == 0) { ESP_LOGW(TAG, "scan: none"); return; }
+    ESP_LOGI(TAG, "scan: %d ap(s), ssid / rssi", n);
+    for (int i = 0; i < n; i++) {
+        ESP_LOGI(TAG, "  %2d) %-24s %4d dBm", i + 1, aps[i].ssid, (int)aps[i].rssi);
+    }
 }

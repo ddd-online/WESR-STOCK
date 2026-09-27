@@ -220,7 +220,14 @@ void DisplayPort::RLCD_SendData(uint8_t Data) {
 }
 
 void DisplayPort::RLCD_Sendbuffera(uint8_t *Data, int len) {
-    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_color(io_handle, -1, Data, len));
+    /* 这里原来用 ESP_ERROR_CHECK：整屏 15000 字节要一块连续的内部 DMA 缓冲，
+       配网模式（BLE 常驻）下内存紧张时 spicommon_dma_setup_priv_buffer 会失败，
+       然后整块板子 abort 重启。刷不进最多是画面停一帧，不值得重启。 */
+    esp_err_t e = esp_lcd_panel_io_tx_color(io_handle, -1, Data, len);
+    if (e == ESP_OK) return;
+    vTaskDelay(pdMS_TO_TICKS(20));                 /* 让出 CPU，DMA 缓冲可能刚好被释放 */
+    e = esp_lcd_panel_io_tx_color(io_handle, -1, Data, len);
+    if (e != ESP_OK) ESP_LOGW("lcd", "整屏刷新失败(%d)，本帧不改画面", (int)e);
 }
 
 void DisplayPort::Set_ResetIOLevel(uint8_t level) {

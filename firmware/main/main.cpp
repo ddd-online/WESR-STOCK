@@ -18,6 +18,7 @@
 #include "net_task.h"
 #include "quote_service.h"
 #include "input_task.h"
+#include "ble_task.h"
 #include "i2c_equipment.h"   /* rtcTimeStruct_t / Rtc_GetTime（port_bsp） */
 
 /* 时钟：每 30 秒读一次 RTC（秒级刷新对 1-bit 屏没意义，还费电） */
@@ -84,6 +85,7 @@ extern "C" void app_main(void)
     Sensor_TaskStart();
     xTaskCreate(clock_task, "clock", 3072, NULL, 2, NULL);
     Input_TaskStart();       /* KEY：单击切页 / 双击换股 / 长按配网 */
+    Ble_Start();             /* BLE 配网：赶在 WiFi/NimBLE 之前把命令任务建好 */
     Net_TaskStart();
     ESP_LOGI("wesr", "ui up, version %s", "0.1.0");
 
