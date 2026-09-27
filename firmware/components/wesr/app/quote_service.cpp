@@ -34,6 +34,46 @@ void Quote_SetPage(uint8_t page)
     Quote_RefreshUi();
 }
 
+/* 把 nav 状态同步到 AppState（第 4 页要显示当前组/索引） */
+static void publish_nav(void)
+{
+    AppState_Lock();
+    AppState_Status()->page = s_nav.page;
+    AppState_Status()->group = s_nav.group;
+    AppState_Status()->idx = s_nav.idx;
+    AppState_Unlock();
+}
+
+void Quote_NavClick(void)
+{
+    wesr_nav_click(&s_nav);
+    publish_nav();
+    if (Lvgl_lock(200)) {
+        Ui_ShowPage(s_nav.page);
+        Lvgl_unlock();
+    }
+    Quote_RefreshUi();
+    ESP_LOGI(TAG, "KEY click -> page %u", s_nav.page);
+}
+
+void Quote_NavDouble(void)
+{
+    wesr_nav_double(&s_nav);
+    publish_nav();
+    Quote_RefreshUi();
+    ESP_LOGI(TAG, "KEY double -> page %u group %u idx %u", s_nav.page, s_nav.group, s_nav.idx);
+}
+
+void Quote_NavSetPairing(bool on)
+{
+    AppState_Lock();
+    AppState_Status()->pairing = on;
+    AppState_Status()->pairing_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    AppState_Unlock();
+    Quote_RefreshUi();
+    ESP_LOGI(TAG, "KEY long press -> pairing %s", on ? "on" : "off");
+}
+
 /* ---------- HTTP ---------- */
 /* verify=false 时不校验证书（spec §4.4 的降级策略：公开行情数据、无凭证） */
 static char *http_get_ex(const char *url, int *out_len, bool verify)
@@ -233,7 +273,12 @@ void Quote_RefreshUi(void)
     Lvgl_unlock();
 
     char b[64];
-    if (closed) {
+    AppState_Lock();
+    bool pairing = AppState_Status()->pairing;
+    AppState_Unlock();
+    if (pairing) {
+        Ui_StatusBar("配网模式 · 等待小程序", true);
+    } else if (closed) {
         snprintf(b, sizeof b, "休市 · 显示 %02u-%02u 收盘数据",
                  (unsigned)((day / 100) % 100), (unsigned)(day % 100));
         Ui_StatusBar(b, false);
@@ -305,6 +350,16 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
         AppState_Unlock();
         s_nav.page = page;          /* 内部页状态必须跟着走，否则刷新永远刷错页 */
         if (page != last_page) { wesr_sched_page(&sched, page); last_page = page; }
+        /* 配网模式 3 分钟无操作自动退出（M4 起这里还会关掉 BLE 广播） */
+        AppState_Lock();
+        bool pair_timeout = AppState_Status()->pairing &&
+            (uint32_t)(now_ms - AppState_Status()->pairing_ms) > 180000u;
+        if (pair_timeout) AppState_Status()->pairing = false;
+        AppState_Unlock();
+        if (pair_timeout) {
+            ESP_LOGI(TAG, "pairing timeout");
+            Quote_RefreshUi();
+        }
 
         /* 交易时段正常轮询；休市时"按页补一次"——这样切到没数据的那页也能看到上一交易日数据 */
         bool need = false;

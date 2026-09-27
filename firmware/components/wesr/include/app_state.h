@@ -38,6 +38,8 @@ typedef struct {
     uint8_t       quotes_n;
     wesr_minute_t minutes[4];      /* 当前组的四只 */
     bool          minutes_ok;
+    bool          pairing;         /* 长按 KEY 进入配网模式（M4 起真正开 BLE 广播） */
+    uint32_t      pairing_ms;      /* 进配网模式的时刻（3 分钟无操作自动退出） */
 } wesr_status_t;
 
 void            AppState_Init(void);

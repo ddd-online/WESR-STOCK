@@ -10,4 +10,11 @@ menu "WESR-STOCK"
         string "WiFi password"
         default ""
 
+    config WESR_DEBUG_FB_DUMP
+        bool "开发期：每 15 秒把显存 dump 成 ASCII 到串口"
+        default n
+        help
+            仅用于开发验证（没有相机/看不到屏幕时，回读显存自检画面）。
+            量产固件请保持关闭：它会周期性占用串口约 10 秒。
+
 endmenu

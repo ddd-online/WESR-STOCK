@@ -17,6 +17,7 @@ idf_component_register(
     "app/sensor_task.cpp"
     "app/net_task.cpp"
     "app/quote_service.cpp"
+    "app/input_task.cpp"
     "port/board_init.cpp"
     "ui/ui_root.c"
     "ui/ui_page1.c"

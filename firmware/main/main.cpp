@@ -17,6 +17,7 @@
 #include "sensor_task.h"
 #include "net_task.h"
 #include "quote_service.h"
+#include "input_task.h"
 #include "i2c_equipment.h"   /* rtcTimeStruct_t / Rtc_GetTime（port_bsp） */
 
 /* 时钟：每 30 秒读一次 RTC（秒级刷新对 1-bit 屏没意义，还费电） */
@@ -82,30 +83,21 @@ extern "C" void app_main(void)
     }
     Sensor_TaskStart();
     xTaskCreate(clock_task, "clock", 3072, NULL, 2, NULL);
+    Input_TaskStart();       /* KEY：单击切页 / 双击换股 / 长按配网 */
     Net_TaskStart();
     ESP_LOGI("wesr", "ui up, version %s", "0.1.0");
 
-    /* 无屏验证通道：每 15 秒轮换页面并全分辨率 dump 一次显存（开发期用，Task 16 关掉） */
-    uint32_t last_dump_ms = 0;
-    uint32_t dump_no = 0;
-    while (true) {
+    /* 主循环：正常情况下什么都不做（各任务自管）。
+       开发期可开 CONFIG_WESR_DEBUG_FB_DUMP 定期回读显存，用于无相机自检画面。 */
+    for (;;) {
+#if CONFIG_WESR_DEBUG_FB_DUMP
+        static uint32_t last_dump_ms;
         uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
         if (now_ms - last_dump_ms >= 15000) {
             last_dump_ms = now_ms;
-            dump_no++;
-            uint8_t page = (uint8_t)(((dump_no - 1) % 4) + 1);
-            /* 让行情服务跟着"看到的页"走：等于替 Task 16 的 KEY 切页做验证 */
-            AppState_Lock();
-            AppState_Status()->page = page;
-            AppState_Unlock();
-            if (Lvgl_lock(-1)) {
-                Ui_ShowPage(page);
-                Lvgl_unlock();
-            }
-            Quote_SetPage(page);    /* 同步页状态 + 立刻用缓存重画（按键切页也走这条） */
-            vTaskDelay(pdMS_TO_TICKS(900));   /* 等 LVGL 刷完这一帧再回读显存 */
             Board_DumpFbFull();
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+#endif
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 }

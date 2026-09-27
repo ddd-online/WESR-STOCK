@@ -15,6 +15,11 @@ void Quote_RefreshUi(void);
 /* 切页：同步内部页状态并立刻用缓存重画（Task 16 的按键切页也走这里） */
 void Quote_SetPage(uint8_t page);
 
+/* 按键动作（KEY 键）：单击切页、双击换组/换股、长按进配网模式 */
+void Quote_NavClick(void);
+void Quote_NavDouble(void);
+void Quote_NavSetPairing(bool on);
+
 #ifdef __cplusplus
 }
 #endif
