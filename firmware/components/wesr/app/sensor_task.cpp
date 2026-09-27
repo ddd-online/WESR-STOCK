@@ -4,6 +4,7 @@
 #include "board_init.h"
 #include "ui_page1.h"
 #include "ui_page4.h"
+#include "ui_root.h"
 #include "i2c_equipment.h"
 #include "adc_bsp.h"
 #include "lvgl_bsp.h"
@@ -44,6 +45,7 @@ static void sensor_task(void *arg)
         if (Lvgl_lock(200)) {
             if (ok) Ui_Page1SetEnv(show_t, show_h);
             Ui_Page4Update(AppState_Status());
+            Ui_UpdateHeader(AppState_Status());      /* 顶栏电量与电池图标从真实状态来 */
             Lvgl_unlock();
         }
         ESP_LOGI("sensor", "temp=%.1f humi=%.0f batt=%.2fV %u%%", show_t, show_h,

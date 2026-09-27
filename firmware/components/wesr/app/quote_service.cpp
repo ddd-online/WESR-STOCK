@@ -267,6 +267,7 @@ void Quote_RefreshUi(void)
         (void)i;
     }
     Ui_Page4Update(st);
+    Ui_UpdateHeader(st);          /* WiFi/蓝牙连接状态在顶栏用图标表达 */
     uint32_t day = st->data_day;
     bool closed = st->closed, offline = st->offline;
     AppState_Unlock();

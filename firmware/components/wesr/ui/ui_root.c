@@ -12,6 +12,9 @@
 static lv_obj_t *s_dots[4];
 static lv_obj_t *s_bank[2];
 static lv_obj_t *s_batt_label;
+static lv_obj_t *s_batt_icon;
+static lv_obj_t *s_wifi_x;      /* WiFi 不可用时跟在图标后的小叉 */
+static lv_obj_t *s_bt_x;
 static lv_obj_t *s_bar;          /* 状态条 */
 static lv_obj_t *s_pages[4];
 static uint8_t   s_page_now = 1;
@@ -41,11 +44,19 @@ static void build_header(void)
 
     lv_obj_t *wifi = lv_label_create(hd);          /* 内置符号字体，省一份图标资源 */
     lv_label_set_text(wifi, LV_SYMBOL_WIFI);
-    lv_obj_align(wifi, LV_ALIGN_LEFT_MID, 6, 0);
+    lv_obj_align(wifi, LV_ALIGN_LEFT_MID, 5, 0);
+    s_wifi_x = lv_label_create(hd);                /* 断开时显示 ✕（1-bit 屏没有灰度可表达弱化） */
+    lv_label_set_text(s_wifi_x, LV_SYMBOL_CLOSE);
+    lv_obj_align(s_wifi_x, LV_ALIGN_LEFT_MID, 20, 0);
+    lv_obj_add_flag(s_wifi_x, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *bt = lv_label_create(hd);
     lv_label_set_text(bt, LV_SYMBOL_BLUETOOTH);
-    lv_obj_align(bt, LV_ALIGN_LEFT_MID, 26, 0);
+    lv_obj_align(bt, LV_ALIGN_LEFT_MID, 33, 0);
+    s_bt_x = lv_label_create(hd);
+    lv_label_set_text(s_bt_x, LV_SYMBOL_CLOSE);
+    lv_obj_align(s_bt_x, LV_ALIGN_LEFT_MID, 45, 0);
+    lv_obj_add_flag(s_bt_x, LV_OBJ_FLAG_HIDDEN);
 
     for (int i = 0; i < 4; i++) {                  /* 页码点 */
         s_dots[i] = lv_obj_create(hd);
@@ -70,9 +81,32 @@ static void build_header(void)
     lv_label_set_text(s_batt_label, "82%");
     lv_obj_align(s_batt_label, LV_ALIGN_RIGHT_MID, -28, 0);
 
-    lv_obj_t *bat = lv_label_create(hd);
-    lv_label_set_text(bat, LV_SYMBOL_BATTERY_3);
-    lv_obj_align(bat, LV_ALIGN_RIGHT_MID, -6, 0);
+    s_batt_icon = lv_label_create(hd);
+    lv_label_set_text(s_batt_icon, LV_SYMBOL_BATTERY_EMPTY);
+    lv_obj_align(s_batt_icon, LV_ALIGN_RIGHT_MID, -6, 0);
+}
+
+/* 顶栏状态：电量百分比与电池图标档位、WiFi/蓝牙是否有连接（断开时图标后加 ✕） */
+void Ui_UpdateHeader(const wesr_status_t *st)
+{
+    if (!st) return;
+    char b[16];
+    if (st->battery_v > 0.0f) snprintf(b, sizeof b, "%u%%", (unsigned)st->battery_pct);
+    else                      snprintf(b, sizeof b, "--%%");
+    lv_label_set_text(s_batt_label, b);
+
+    const char *icon = LV_SYMBOL_BATTERY_EMPTY;
+    if (st->charging)            icon = LV_SYMBOL_CHARGE;
+    else if (st->battery_pct >= 90) icon = LV_SYMBOL_BATTERY_FULL;
+    else if (st->battery_pct >= 65) icon = LV_SYMBOL_BATTERY_3;
+    else if (st->battery_pct >= 40) icon = LV_SYMBOL_BATTERY_2;
+    else if (st->battery_pct >= 15) icon = LV_SYMBOL_BATTERY_1;
+    lv_label_set_text(s_batt_icon, icon);
+
+    if (st->wifi_connected) lv_obj_add_flag(s_wifi_x, LV_OBJ_FLAG_HIDDEN);
+    else                    lv_obj_clear_flag(s_wifi_x, LV_OBJ_FLAG_HIDDEN);
+    if (st->bt_connected)   lv_obj_add_flag(s_bt_x, LV_OBJ_FLAG_HIDDEN);
+    else                    lv_obj_clear_flag(s_bt_x, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void build_statusbar(void)
