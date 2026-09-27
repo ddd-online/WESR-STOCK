@@ -19,39 +19,100 @@
 #include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 
 #define TAG "quote"
 
 static const wesr_app_cfg_t *s_cfg;
 static wesr_nav_t            s_nav;            /* 当前页/组/索引（Task 16 起由按键驱动） */
 
+void Quote_SetPage(uint8_t page)
+{
+    s_nav.page = page ? page : 1;
+    Quote_RefreshUi();
+}
+
 /* ---------- HTTP ---------- */
-static char *http_get(const char *url, int *out_len)
+/* verify=false 时不校验证书（spec §4.4 的降级策略：公开行情数据、无凭证） */
+static char *http_get_ex(const char *url, int *out_len, bool verify)
 {
     esp_http_client_config_t ccfg;
     memset(&ccfg, 0, sizeof ccfg);
     ccfg.url = url;
     ccfg.timeout_ms = 5000;
-    ccfg.crt_bundle_attach = esp_crt_bundle_attach;
+    if (verify) {
+        ccfg.crt_bundle_attach = esp_crt_bundle_attach;
+    } else {
+        ccfg.skip_cert_common_name_check = true;   /* 降级：不校验证书 */
+    }
     ccfg.user_agent = "Mozilla/5.0";
 
     esp_http_client_handle_t c = esp_http_client_init(&ccfg);
     if (!c) return NULL;
     char *buf = NULL;
-    if (esp_http_client_open(c, 0) == ESP_OK) {
+    esp_err_t oe = esp_http_client_open(c, 0);
+    if (oe == ESP_OK) {
         int len = esp_http_client_fetch_headers(c);
-        if (len > 0 && len < 65536) {
-            buf = (char *)heap_caps_malloc((size_t)len + 1, MALLOC_CAP_SPIRAM);
-            if (buf) {
-                int got = esp_http_client_read(c, buf, len);
-                if (got <= 0) { free(buf); buf = NULL; }
-                else { buf[got] = 0; if (out_len) *out_len = got; }
+        int status = esp_http_client_get_status_code(c);
+        /* chunked/无 Content-Length 时 len 会是 -1，所以不能只按 len 分配 */
+        size_t cap = (len > 0 && len < 65536) ? (size_t)len + 1 : 32768;
+        buf = (char *)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
+        if (buf) {
+            size_t total = 0;
+            for (;;) {
+                int r = esp_http_client_read(c, buf + total, (int)(cap - 1 - total));
+                if (r <= 0) break;
+                total += (size_t)r;
+                if (total >= cap - 1) break;
+            }
+            buf[total] = 0;
+            ESP_LOGI(TAG, "http %d len=%d read=%u", status, len, (unsigned)total);
+            if (total == 0) { free(buf); buf = NULL; }
+            else if (out_len) *out_len = (int)total;
+        }
+    } else {
+        ESP_LOGW(TAG, "http open failed (%d, verify=%d): %s", (int)oe, (int)verify, url);
+        if (verify) {
+            /* 诊断：是 DNS 解析不出来，还是解析出来了但连不上 */
+            const char *host = strstr(url, "://");
+            if (host) {
+                char h[64];
+                host += 3;
+                size_t n = 0;
+                while (host[n] && host[n] != '/' && host[n] != ':' && n < sizeof h - 1) { h[n] = host[n]; n++; }
+                h[n] = 0;
+                struct addrinfo hints;
+                memset(&hints, 0, sizeof hints);
+                hints.ai_family = AF_INET;
+                hints.ai_socktype = SOCK_STREAM;
+                struct addrinfo *res = NULL;
+                int g = getaddrinfo(h, "443", &hints, &res);
+                if (g == 0 && res) {
+                    struct sockaddr_in *a = (struct sockaddr_in *)res->ai_addr;
+                    ESP_LOGW(TAG, "  dns %s -> %s", h, inet_ntoa(a->sin_addr));
+                    freeaddrinfo(res);
+                } else {
+                    ESP_LOGW(TAG, "  dns %s failed rc=%d", h, g);
+                }
             }
         }
     }
     esp_http_client_close(c);
     esp_http_client_cleanup(c);
     return buf;
+}
+
+/* 先用 crt_bundle 校验；失败再降级重试一次（并打警告） */
+static char *http_get(const char *url, int *out_len)
+{
+    char *b = http_get_ex(url, out_len, true);
+    if (!b) {
+        ESP_LOGW(TAG, "TLS 校验失败，降级为不校验重试: %s", url);
+        b = http_get_ex(url, out_len, false);
+    }
+    return b;
 }
 
 /* ---------- 第 1 页：批量快照 ---------- */
@@ -91,13 +152,22 @@ static bool fetch_quotes(void)
 }
 
 /* ---------- 第 2/3 页：分时（单只一次请求，响应自带快照与市场状态） ---------- */
+/* 两个主机返回同一份数据；实测某些网络里 web.ifzq 连不上而 proxy.finance 可以，
+   所以两个都试一遍（都是腾讯自己的接口）。 */
+static const char *kMinuteUrls[] = {
+    "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=%s",
+    "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/minute/query?code=%s",
+};
+
 static bool fetch_minute(const char *code, wesr_minute_t *out, wesr_quote_t *qout,
                          bool *closed, uint32_t *day)
 {
     char url[192];
-    snprintf(url, sizeof url, "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=%s", code);
-    int len = 0;
-    char *body = http_get(url, &len);
+    char *body = NULL;
+    for (int h = 0; h < 2 && !body; h++) {
+        snprintf(url, sizeof url, kMinuteUrls[h], code);
+        body = http_get(url, NULL);
+    }
     if (!body) return false;
 
     bool ok = wesr_parse_minute_json(body, out);
@@ -190,6 +260,36 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
     wesr_sched_init(&sched, cfg->refresh_sec);
     uint8_t last_page = 0;
 
+    /* 开机先补一次：休市/非交易时段本来不发请求，但那样画面上永远是空的；
+       设计要的是"休市时显示上一交易日的收盘数据"，所以开机先拉一次快照 + 拉一只分时
+       （分时响应里带 market 状态，才知道是不是休市）。 */
+    if (cfg->ssid[0]) {
+        bool ok1 = fetch_quotes();
+        bool closed = false;
+        uint32_t day = 0;
+        bool ok2 = false;
+        AppState_Lock();
+        AppState_Status()->minutes_ok = false;
+        AppState_Unlock();
+        /* 开机把第 1 组四只都拉一遍：这样即便休市，第 2 页也有上一交易日的分时可看 */
+        for (int i = 0; i < 4 && i < cfg->count; i++) {
+            AppState_Lock();
+            wesr_minute_t *m = &AppState_Status()->minutes[i];
+            wesr_quote_t  *q = &AppState_Status()->quotes[i];
+            AppState_Unlock();
+            if (fetch_minute(cfg->stocks[i].code, m, q, &closed, &day)) ok2 = true;
+            /* 注意：休市也要把 4 只都拉完 —— 第 2 页四宫格要显示四只的上一交易日分时 */
+        }
+        AppState_Lock();
+        if (ok2) AppState_Status()->minutes_ok = true;
+        AppState_Status()->closed = closed;
+        AppState_Status()->data_day = day;
+        AppState_Status()->offline = !(ok1 || ok2);
+        AppState_Unlock();
+        ESP_LOGI(TAG, "bootstrap: quotes=%d minute=%d closed=%d day=%lu", (int)ok1, (int)ok2,
+                 (int)closed, (unsigned long)day);
+    }
+
     Quote_RefreshUi();     /* 先按当前状态画一次（未配网/未联网状态条、清掉占位文字） */
     for (;;) {
         uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
@@ -203,9 +303,20 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
         uint8_t page = AppState_Status()->page ? AppState_Status()->page : 1;
         bool srv_closed = AppState_Status()->closed;
         AppState_Unlock();
+        s_nav.page = page;          /* 内部页状态必须跟着走，否则刷新永远刷错页 */
         if (page != last_page) { wesr_sched_page(&sched, page); last_page = page; }
 
-        bool may_fetch = trading && !srv_closed;
+        /* 交易时段正常轮询；休市时"按页补一次"——这样切到没数据的那页也能看到上一交易日数据 */
+        bool need = false;
+        if (srv_closed) {
+            AppState_Lock();
+            wesr_status_t *st = AppState_Status();
+            if (page == 1)      need = !st->quotes[0].valid;
+            else if (page == 2) need = !st->minutes[0].valid;
+            else if (page == 3) need = !st->minutes[0].valid;
+            AppState_Unlock();
+        }
+        bool may_fetch = (trading && !srv_closed) || (srv_closed && need);
         wesr_fetch_t what = wesr_sched_tick(&sched, now_ms, may_fetch);
         if (what != WESR_FETCH_NONE) {
             bool ok = (what == WESR_FETCH_QUOTES) ? fetch_quotes() : fetch_page_minutes();

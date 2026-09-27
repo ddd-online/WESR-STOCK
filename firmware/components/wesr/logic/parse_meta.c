@@ -59,9 +59,11 @@ bool wesr_parse_minute_meta(const char *json, wesr_minute_meta_t *meta)
                 arr_f(p, e, 5, &meta->quote.open);
                 arr_f(p, e, 31, &meta->quote.chg);
                 arr_f(p, e, 32, &meta->quote.chg_pct);
-                arr_f(p, e, 33, &meta->quote.high);
-                arr_f(p, e, 34, &meta->quote.low);
-                meta->quote.valid = true;
+            arr_f(p, e, 33, &meta->quote.high);
+            arr_f(p, e, 34, &meta->quote.low);
+            float volf = 0;
+            if (arr_f(p, e, 36, &volf)) meta->quote.vol_hands = (uint32_t)volf;   /* 成交量(手) */
+            meta->quote.valid = true;
                 meta->has_quote = true;
                 break;
             }

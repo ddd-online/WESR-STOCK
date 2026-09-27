@@ -16,6 +16,7 @@
 #include "app_state.h"
 #include "sensor_task.h"
 #include "net_task.h"
+#include "quote_service.h"
 #include "i2c_equipment.h"   /* rtcTimeStruct_t / Rtc_GetTime（port_bsp） */
 
 /* 时钟：每 30 秒读一次 RTC（秒级刷新对 1-bit 屏没意义，还费电） */
@@ -101,6 +102,7 @@ extern "C" void app_main(void)
                 Ui_ShowPage(page);
                 Lvgl_unlock();
             }
+            Quote_SetPage(page);    /* 同步页状态 + 立刻用缓存重画（按键切页也走这条） */
             vTaskDelay(pdMS_TO_TICKS(900));   /* 等 LVGL 刷完这一帧再回读显存 */
             Board_DumpFbFull();
         }

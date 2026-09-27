@@ -12,6 +12,9 @@ void Quote_Run(const wesr_app_cfg_t *cfg);
 /* 把缓存里的行情刷到 UI（内部会取 LVGL 锁） */
 void Quote_RefreshUi(void);
 
+/* 切页：同步内部页状态并立刻用缓存重画（Task 16 的按键切页也走这里） */
+void Quote_SetPage(uint8_t page);
+
 #ifdef __cplusplus
 }
 #endif

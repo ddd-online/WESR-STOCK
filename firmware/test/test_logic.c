@@ -91,6 +91,7 @@ static void test_minute_meta(void)
     assert(fabsf(meta.quote.last - 1237.00f) < 0.01f);       /* qt 数组下标 3 */
     assert(fabsf(meta.quote.prev_close - 1251.24f) < 0.01f); /* 下标 4 → 昨收 */
     assert(fabsf(meta.quote.open - 1250.01f) < 0.01f);       /* 下标 5 */
+    assert(meta.quote.vol_hands == 31239);                    /* 下标 36：成交量(手) */
     assert(meta.closed);                                    /* 实测抓到的就是休市 */
 
     /* 没有 market / 没有 qt 时不崩，has_quote=false */

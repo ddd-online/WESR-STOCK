@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 
 #define WIFI_OK_BIT BIT0
@@ -20,16 +21,19 @@
 
 static EventGroupHandle_t   s_wifi_ev;
 static bool                 s_wifi_inited;
+static bool                 s_have_creds;      /* 没有凭据时不要反复 esp_wifi_connect */
 
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        if (s_have_creds) esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
+        ESP_LOGW(TAG, "disconnected reason=%d", d ? d->reason : -1);
         AppState_Lock();
         AppState_Status()->wifi_connected = false;
         AppState_Unlock();
-        esp_wifi_connect();                      /* 断了就一直重连 */
+        if (s_have_creds) esp_wifi_connect();    /* 断了就一直重连 */
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         AppState_Lock();
@@ -60,8 +64,15 @@ static void wifi_init_once(void)
 
 bool Net_WifiConnect(const char *ssid, const char *pass, int timeout_ms)
 {
-    if (!ssid || !ssid[0]) return false;
     wifi_init_once();
+    /* 先把射频起来：没凭据时也要能扫描（配网就看这一步） */
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    esp_err_t e = esp_wifi_start();
+    if (e != ESP_OK && e != ESP_ERR_WIFI_STATE) {
+        ESP_LOGW(TAG, "wifi start failed: %d", (int)e);
+        return false;
+    }
+    if (!ssid || !ssid[0]) return false;
 
     wifi_config_t wc;
     memset(&wc, 0, sizeof wc);
@@ -69,9 +80,10 @@ bool Net_WifiConnect(const char *ssid, const char *pass, int timeout_ms)
     strncpy((char *)wc.sta.password, pass ? pass : "", sizeof wc.sta.password - 1);
     wc.sta.threshold.authmode = WIFI_AUTH_OPEN;   /* 开放网络也能连 */
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    esp_wifi_disconnect();                        /* 清掉上一次残留状态 */
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    s_have_creds = true;
+    esp_wifi_connect();                           /* 必须显式发起连接：漏了就一直 NO_AP_FOUND */
 
     xEventGroupClearBits(s_wifi_ev, WIFI_OK_BIT);
     EventBits_t bits = xEventGroupWaitBits(s_wifi_ev, WIFI_OK_BIT, pdFALSE, pdTRUE,
@@ -135,15 +147,62 @@ static void net_task(void *arg)
     snprintf(AppState_Status()->fw, sizeof AppState_Status()->fw, "v0.1.0");
     AppState_Unlock();
 
-    if (!Net_WifiConnect(cfg.ssid, cfg.pass, 20000)) {
-        ESP_LOGW(TAG, "no wifi: ssid=%s", cfg.ssid[0] ? cfg.ssid : "(empty)");
-    } else {
-        Net_TimeSync(15000);
+    /* 连不上就"扫描记录 + 隔 20 秒重试"：串口里能同时看到"扫得到"与"连不上"的对比 */
+    for (int attempt = 1; ; attempt++) {
+        if (Net_WifiConnect(cfg.ssid, cfg.pass, 20000)) {
+            ESP_LOGI(TAG, "wifi connected (attempt %d)", attempt);
+            Net_TimeSync(15000);
+            break;
+        }
+        ESP_LOGW(TAG, "no wifi (attempt %d): ssid=%s", attempt,
+                 cfg.ssid[0] ? cfg.ssid : "(empty)");
+        Net_WifiScanLog();          /* 扫一遍附近网络，和上面的失败原因对照着看 */
+        if (!cfg.ssid[0]) break;    /* 没配网就别转圈了，等 M4 配网 */
+        vTaskDelay(pdMS_TO_TICKS(20000));
     }
     Quote_Run(&cfg);                      /* 行情主循环（内部处理断网/退避） */
 }
 
 void Net_TaskStart(void)
 {
-    xTaskCreate(net_task, "net", 6144, NULL, 4, NULL);
+    /* 12KB：HTTPS/TLS 握手很吃栈（6KB 实测直接栈溢出重启） */
+    xTaskCreate(net_task, "net", 12288, NULL, 4, NULL);
+}
+
+/* 扫描附近的 2.4G 网络并打到串口（ESP32-S3 只支持 2.4G，所以扫到的都是 2.4G）。
+   用途：① v1 配网时看该填哪个 SSID；② M4 小程序配网也要这份列表。 */
+void Net_WifiScanLog(void)
+{
+    wifi_init_once();
+    /* 关键：先关掉"断线自动重连"开关再断——否则事件回调会立刻发起连接，
+       扫描永远撞上"正在连接"状态而失败（实测 scan failed）。 */
+    bool had_creds = s_have_creds;
+    s_have_creds = false;
+    esp_wifi_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    wifi_scan_config_t sc;
+    memset(&sc, 0, sizeof sc);
+    sc.show_hidden = true;
+    esp_err_t e = esp_wifi_scan_start(&sc, true);
+    if (e != ESP_OK) {
+        ESP_LOGW(TAG, "scan failed: %d", (int)e);
+        s_have_creds = had_creds;
+        return;
+    }
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    if (n > 20) n = 20;
+    if (n == 0) { ESP_LOGW(TAG, "scan: none"); s_have_creds = had_creds; return; }
+    wifi_ap_record_t *recs = (wifi_ap_record_t *)calloc(n, sizeof(wifi_ap_record_t));
+    if (!recs) { s_have_creds = had_creds; return; }
+    if (esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
+        ESP_LOGI(TAG, "scan: %u ap(s), ssid / rssi / auth / ch", (unsigned)n);
+        for (int i = 0; i < n; i++) {
+            ESP_LOGI(TAG, "  %2d) %-24s %4d dBm auth=%d ch=%u", i + 1,
+                     (const char *)recs[i].ssid, recs[i].rssi, (int)recs[i].authmode,
+                     (unsigned)recs[i].primary);
+        }
+    }
+    free(recs);
+    s_have_creds = had_creds;
 }
