@@ -48,19 +48,19 @@ lv_obj_t *Ui_Page1Create(void)
     /* 温湿度：底部两栏，中间一条分隔线 */
     lv_obj_t *line = lv_obj_create(left);
     lv_obj_set_size(line, UI_P1_LEFT_W - 24, 1);
-    lv_obj_set_pos(line, 12, 220);
+    lv_obj_set_pos(line, 12, 208);
     lv_obj_set_style_bg_color(line, lv_color_black(), 0);
     lv_obj_set_style_border_width(line, 0, 0);
     lv_obj_set_style_radius(line, 0, 0);
 
-    lv_obj_t *t_lb = mk_label(left, &font_cn16, 48, 230);
+    lv_obj_t *t_lb = mk_label(left, &font_cn16, 48, 218);
     lv_label_set_text(t_lb, "温度");
-    s_temp = mk_label(left, &font_num19, 30, 248);
+    s_temp = mk_label(left, &font_num19, 30, 236);
     lv_label_set_text(s_temp, "--.-");
 
-    lv_obj_t *h_lb = mk_label(left, &font_cn16, 200, 230);
+    lv_obj_t *h_lb = mk_label(left, &font_cn16, 200, 218);
     lv_label_set_text(h_lb, "湿度");
-    s_humi = mk_label(left, &font_num19, 190, 248);
+    s_humi = mk_label(left, &font_num19, 190, 236);
     lv_label_set_text(s_humi, "--");
 
     /* ---- 右栏 100px：8 行 ---- */

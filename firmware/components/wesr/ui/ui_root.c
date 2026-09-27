@@ -5,6 +5,7 @@
 #include "ui_page1.h"
 #include "ui_page2.h"
 #include "ui_page3.h"
+#include "ui_page4.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -76,10 +77,13 @@ static void build_header(void)
 
 static void build_statusbar(void)
 {
+    /* 状态条放屏幕最底边：设计稿是顶栏下方，但那会压住各页顶部内容（每页都是从 y=24 满高排的），
+       放底部不用重排四页，反白时同样醒目。 */
     s_bar = lv_label_create(lv_scr_act());
     lv_obj_set_size(s_bar, UI_W, UI_BAR_H);
-    lv_obj_set_pos(s_bar, 0, UI_HEADER_H);
+    lv_obj_set_pos(s_bar, 0, UI_H - UI_BAR_H);
     lv_obj_set_style_text_align(s_bar, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(s_bar, &font_cn12, 0);   /* 状态条是中文，必须用中文字体 */
     lv_obj_set_style_border_width(s_bar, 1, 0);
     lv_obj_set_style_border_side(s_bar, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_pad_all(s_bar, 0, 0);
@@ -99,6 +103,10 @@ static void build_pages(void)
         }
         if (i == 2) {                 /* 第 3 页：个股分时（Task 12） */
             s_pages[i] = Ui_Page3Create();
+            continue;
+        }
+        if (i == 3) {                 /* 第 4 页：系统状态（Task 13） */
+            s_pages[i] = Ui_Page4Create();
             continue;
         }
         s_pages[i] = lv_obj_create(lv_scr_act());
@@ -136,7 +144,8 @@ void Ui_Init(void)
     lv_obj_set_style_bg_color(lv_scr_act(), lv_color_white(), 0);
     lv_obj_clear_flag(lv_scr_act(), LV_OBJ_FLAG_SCROLLABLE);
     build_header();
-    build_statusbar();
     build_pages();
+    build_statusbar();
+    lv_obj_move_foreground(s_bar);        /* 盖在页面之上，否则被页面容器遮住 */
     Ui_ShowPage(1);
 }

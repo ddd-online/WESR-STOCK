@@ -13,7 +13,9 @@
 #include "ui_page1.h"
 #include "ui_page2.h"
 #include "ui_page3.h"
+#include "ui_page4.h"
 #include "wesr_logic.h"
+#include "app_state.h"
 #include "i2c_equipment.h"   /* rtcTimeStruct_t / Rtc_GetTime（port_bsp） */
 #include <math.h>
 
@@ -87,8 +89,41 @@ static void feed_fake_page1(void)
         Ui_Page1Update(q, cfg.stocks, 8);
         Ui_Page2Update(s_min, q, cfg.stocks, 0, 8);
         Ui_Page3Update(&s_min[0], q, cfg.stocks, 0, 8);
+        Ui_Page4Update(AppState_Status());
         Lvgl_unlock();
     }
+}
+
+/* 第 4 页的假状态（Task 14/15 会换成真实采集值） */
+static void fill_fake_status(void)
+{
+    AppState_Init();
+    AppState_Lock();
+    wesr_status_t *st = AppState_Status();
+    st->wifi_connected = true;
+    snprintf(st->ssid, sizeof st->ssid, "HOME-5G");
+    snprintf(st->ip, sizeof st->ip, "192.168.1.42");
+    st->rssi = -58;
+    st->bt_connected = false;
+    st->battery_v = 3.95f;
+    st->battery_pct = 82;
+    st->charging = false;
+    st->temp_c = 24.6f;
+    st->humi_pct = 58.0f;
+    st->sd_mounted = false;
+    st->offline = false;
+    st->closed = true;
+    st->data_day = 20260924u;
+    st->refresh_sec = 15;
+    st->stock_count = 8;
+    st->page = 1;
+    st->group = 0;
+    st->idx = 0;
+    snprintf(st->fw, sizeof st->fw, "v0.1.0");
+    st->uptime_s = 3 * 86400u + 4 * 3600u + 12 * 60u;
+    st->heap_kb = 142;
+    st->psram_kb = 6200;
+    AppState_Unlock();
 }
 
 extern "C" void app_main(void)
@@ -105,7 +140,8 @@ extern "C" void app_main(void)
         Ui_Init();
         Lvgl_unlock();
     }
-    feed_fake_page1();
+    fill_fake_status();
+    feed_fake_page1();        /* 里面会读 AppState 渲染第 4 页，所以必须先填状态 */
     ESP_LOGI("wesr", "ui up, version %s", "0.1.0");
 
     /* 无屏验证通道：
@@ -117,19 +153,24 @@ extern "C" void app_main(void)
         int c = Board_PollKey();
         if (c == 'd' || c == 'D') Board_DumpFbFull();
         uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-        if (now_ms - last_dump_ms >= 20000) {
+        if (now_ms - last_dump_ms >= 15000) {
             last_dump_ms = now_ms;
-            /* 调试期轮换页面：1→2→3→1…，这样一次抓取能拿到三页的实拍 */
+            /* 调试期轮换页面：1→2→3→4→1…；每第 3 次来一次全分辨率。
+               两个周期互质，所以 12 次（≈3 分钟）能把四页各抓一次全分辨率实拍。 */
             dump_no++;
-            uint8_t page = (uint8_t)(((dump_no - 1) % 3) + 1);
+            uint8_t page = (uint8_t)(((dump_no - 1) % 4) + 1);
+            /* 状态条演示：轮换时交替显示"休市（细线）"与"未联网（反白）" */
+            const char *bar = ((dump_no / 4) % 2) ? "未联网 · 显示最后数据"
+                                                  : "休市 · 显示 09-24 收盘数据";
+            bool alert = ((dump_no / 4) % 2) != 0;
             if (Lvgl_lock(-1)) {
                 Ui_ShowPage(page);
+                Ui_StatusBar(bar, alert);
                 Lvgl_unlock();
             }
             vTaskDelay(pdMS_TO_TICKS(900));      /* 等 LVGL 刷完这一帧再回读显存 */
-            /* 隔次全分辨率：页面在 1→2→3 轮转，所以 6 次（≈2 分钟）能把三页各全分辨率抓一遍 */
-            if (dump_no % 2 == 0) Board_DumpFbFull();
-            else                  Board_DumpFb();
+            /* 调试期一律全分辨率：页面在 1→2→3→4 轮转，所以每次 dump 就是下一页的完整实拍 */
+            Board_DumpFbFull();
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
