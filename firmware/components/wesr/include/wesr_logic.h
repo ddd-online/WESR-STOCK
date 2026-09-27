@@ -3,6 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* C++（main.cpp / board_init.cpp）也要调用这些纯 C 函数，必须给它们 C 链接 */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define WESR_MAX_STOCKS 8
 #define WESR_MAX_POINTS 300
 #define WESR_CODE_LEN   12
@@ -112,3 +117,7 @@ typedef struct {
 
 void wesr_cfg_defaults(wesr_app_cfg_t *cfg);
 bool wesr_code_valid(const char *code);
+
+#ifdef __cplusplus
+}
+#endif

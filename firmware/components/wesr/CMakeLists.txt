@@ -15,6 +15,16 @@ idf_component_register(
     "app/cfg_store.c"
     "port/board_init.cpp"
     "ui/ui_root.c"
+    "ui/ui_page1.c"
+    "ui/font_cn16.c"
+    "ui/font_num78.c"
+    "ui/font_num25.c"
+    "ui/font_num19.c"
+    "ui/font_num16.c"
+    "ui/font_num14.c"
+    "ui/font_num12.c"
+    "ui/font_num11.c"
+    "ui/font_num9.c"
     INCLUDE_DIRS "include" "ui"
     REQUIRES port_bsp app_bsp lvgl__lvgl
     # 不拉 json/cJSON：解析是手写的（IDF v6 起 json 组件也不再内置）

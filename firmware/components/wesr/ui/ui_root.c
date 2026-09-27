@@ -2,6 +2,7 @@
    真正的第 1–4 页在 Task 11–13 里替换。 */
 #include "lvgl.h"
 #include "ui_theme.h"
+#include "ui_page1.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -86,6 +87,10 @@ static void build_statusbar(void)
 static void build_pages(void)
 {
     for (int i = 0; i < 4; i++) {
+        if (i == 0) {                 /* 第 1 页已经实现（Task 11） */
+            s_pages[i] = Ui_Page1Create();
+            continue;
+        }
         s_pages[i] = lv_obj_create(lv_scr_act());
         lv_obj_set_size(s_pages[i], UI_W, UI_H - UI_HEADER_H);
         lv_obj_set_pos(s_pages[i], 0, UI_HEADER_H);
