@@ -4,9 +4,19 @@
 #include "input_task.h"
 #include "button_bsp.h"
 #include "quote_service.h"
+#include "app_state.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
+
+static bool pairing_on(void)
+{
+    AppState_Lock();
+    bool p = AppState_Status()->pairing;
+    AppState_Unlock();
+    return p;
+}
 
 static void input_task(void *arg)
 {
@@ -16,7 +26,12 @@ static void input_task(void *arg)
                                                pdMS_TO_TICKS(200));
         if (!bits) continue;
         if (bits & set_bit_button(2)) {
-            Quote_NavSetPairing(true);        /* 长按：配网模式（M4 真正开 BLE） */
+            /* 长按 = 进/出配网模式（spec §8：长按 3 秒进入，再长按 3 秒退出） */
+            bool on = pairing_on();
+            Quote_NavSetPairing(!on);
+        } else if (pairing_on()) {
+            /* 配网模式中单击/双击不生效，免得画面乱跳干扰配网（spec §8） */
+            ESP_LOGI("input", "ignored: pairing mode");
         } else if (bits & set_bit_button(1)) {
             Quote_NavDouble();                /* 双击：第 2 页切组 / 第 3 页换股 */
         } else if (bits & set_bit_button(0)) {
