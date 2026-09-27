@@ -50,7 +50,7 @@ lv_obj_t *Ui_Page2Create(void)
 
         s_cell[i].cell  = c;
         s_cell[i].name  = label(c, &font_cn16, 6, 2);
-        s_cell[i].pct   = label(c, &font_num9, 0, 5);
+        s_cell[i].pct   = label(c, &font_num12, 0, 3);      /* 同上：9px → 12px */
         s_cell[i].price = label(c, &font_num16, 6, 20);
         s_cell[i].canvas = Ui_TrendCreate(c, UI_TREND_W, UI_TREND_H, false, false, false);
         lv_obj_set_pos(s_cell[i].canvas, 8, 40);

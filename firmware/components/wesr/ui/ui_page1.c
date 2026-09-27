@@ -90,7 +90,7 @@ lv_obj_t *Ui_Page1Create(void)
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
         s_mark[i] = mk_label(row, &font_cn16, 6, 0);
-        s_pct[i]  = mk_label(row, &font_num9, 0, 4);
+        s_pct[i]  = mk_label(row, &font_num12, 0, 2);      /* 用户反馈：9px 偏小，提到 12px */
         s_price[i] = mk_label(row, &font_num14, 6, 17);
     }
     return page;

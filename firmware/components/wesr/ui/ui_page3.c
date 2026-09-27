@@ -32,7 +32,7 @@ lv_obj_t *Ui_Page3Create(void)
 
     s_name  = label(page, &font_cn16, 8, 0);
     s_idx   = label(page, &font_num9, 78, 4);
-    s_pct   = label(page, &font_num11, 0, 3);
+    s_pct   = label(page, &font_num14, 0, 2);              /* 用户反馈：11px 偏小，提到 14px */
     lv_obj_align(s_pct, LV_ALIGN_TOP_RIGHT, -8, 3);
     s_price = label(page, &font_num25, 8, 16);
     s_prev  = label(page, &font_cn12, 118, 28);   /* "昨收 xxx" 含汉字，必须用中文字体 */

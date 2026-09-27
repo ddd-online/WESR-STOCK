@@ -112,9 +112,9 @@ static void test_fmt(void)
     wesr_fmt_pct(b, sizeof b, 0.0f, true);
     assert(strcmp(b, "0.00%") == 0);                        /* 平盘不带箭头 */
     wesr_fmt_pct(b, sizeof b, 0.844f, true);
-    assert(strcmp(b, "\xE2\x96\xB2""0.84%") == 0);          /* ▲0.84% */
+    assert(strcmp(b, "\xE2\x96\xB2"" 0.84%") == 0);         /* ▲ 0.84%（带空格） */
     wesr_fmt_pct(b, sizeof b, -1.244f, true);
-    assert(strcmp(b, "\xE2\x96\xBC""1.24%") == 0);          /* ▼1.24% */
+    assert(strcmp(b, "\xE2\x96\xBC"" 1.24%") == 0);         /* ▼ 1.24% */
     wesr_fmt_pct(b, sizeof b, -1.0f, false);
     assert(strcmp(b, "\xE2\x80\x94") == 0);
     assert(wesr_price_font_px(1682.5f) == 12);              /* 整数 4 位 → 降档 */

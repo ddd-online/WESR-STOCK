@@ -17,7 +17,8 @@ void wesr_fmt_pct(char *out, size_t cap, float pct, bool valid)
 {
     if (!valid || !isfinite(pct)) { snprintf(out, cap, "%s", DASH); return; }
     if (fabsf(pct) < 0.005f) { snprintf(out, cap, "0.00%%"); return; }
-    snprintf(out, cap, "%s%.2f%%", pct > 0 ? UP : DOWN, fabsf(pct));
+    /* 箭头与数字之间留一个空格：1bpp 点阵里 ▲/▼ 的字形比其步进宽，紧贴会咬到数字 */
+    snprintf(out, cap, "%s %.2f%%", pct > 0 ? UP : DOWN, fabsf(pct));
 }
 
 int wesr_price_font_px(float v)
