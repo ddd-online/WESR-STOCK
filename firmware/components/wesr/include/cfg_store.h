@@ -3,5 +3,13 @@
 #include "esp_err.h"
 #include "wesr_logic.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 esp_err_t wesr_cfg_load(wesr_app_cfg_t *cfg);
 esp_err_t wesr_cfg_save(const wesr_app_cfg_t *cfg);
+
+#ifdef __cplusplus
+}
+#endif

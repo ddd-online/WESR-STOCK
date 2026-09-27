@@ -92,6 +92,10 @@ lv_obj_t *Ui_Page1Create(void)
         s_mark[i] = mk_label(row, &font_cn16, 6, 0);
         s_pct[i]  = mk_label(row, &font_num12, 0, 2);      /* 用户反馈：9px 偏小，提到 12px */
         s_price[i] = mk_label(row, &font_num14, 6, 17);
+        /* LVGL 的 label 默认文字是 "Text"，必须先置空，否则没数据时满屏 "Text" */
+        lv_label_set_text(s_mark[i], "");
+        lv_label_set_text(s_pct[i], "");
+        lv_label_set_text(s_price[i], "");
     }
     return page;
 }

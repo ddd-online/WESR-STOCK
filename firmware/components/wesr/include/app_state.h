@@ -33,6 +33,11 @@ typedef struct {
     char     fw[16];
     uint32_t uptime_s;
     uint32_t heap_kb, psram_kb;
+    /* 行情缓存（quote_service 写，UI 读） */
+    wesr_quote_t  quotes[WESR_MAX_STOCKS];
+    uint8_t       quotes_n;
+    wesr_minute_t minutes[4];      /* 当前组的四只 */
+    bool          minutes_ok;
 } wesr_status_t;
 
 void            AppState_Init(void);

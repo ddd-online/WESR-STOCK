@@ -393,6 +393,15 @@ static void test_defaults_and_code(void)
     assert(!wesr_code_valid(NULL));
 }
 
+static void test_weekday(void)
+{
+    assert(wesr_weekday(2026, 9, 27) == 0);   /* 2026-09-27 周日 */
+    assert(wesr_weekday(2026, 9, 26) == 6);   /* 周六 */
+    assert(wesr_weekday(2026, 1, 6) == 2);    /* 周二 */
+    assert(wesr_weekday(2000, 2, 29) == 2);   /* 闰日 */
+    assert(wesr_weekday(2024, 3, 1) == 5);    /* 周五 */
+}
+
 int main(void)
 {
     test_quote();
@@ -403,6 +412,7 @@ int main(void)
     test_fmt();
     test_marks();
     test_map_and_time();
+    test_weekday();
     test_nav();
     test_sched();
     test_bmp_primitives();

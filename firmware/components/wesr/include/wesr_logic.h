@@ -61,6 +61,9 @@ int  wesr_minute_index(uint16_t hhmm);
 int  wesr_index_to_x(int idx, int x0, int x1);
 bool wesr_in_trading(uint16_t hhmm);
 
+/* 星期几：0=周日 … 6=周六（Zeller 公式，不依赖 RTC 的 weekday 寄存器是否被写过） */
+uint8_t wesr_weekday(int year, int month, int day);
+
 typedef struct { uint8_t page, group, idx, count; } wesr_nav_t;
 void    wesr_nav_init(wesr_nav_t *n, uint8_t count);
 void    wesr_nav_click(wesr_nav_t *n);

@@ -54,6 +54,10 @@ lv_obj_t *Ui_Page2Create(void)
         s_cell[i].price = label(c, &font_num16, 6, 20);
         s_cell[i].canvas = Ui_TrendCreate(c, UI_TREND_W, UI_TREND_H, false, false, false);
         lv_obj_set_pos(s_cell[i].canvas, 8, 40);
+        /* 同上：LVGL label 默认是 "Text" */
+        lv_label_set_text(s_cell[i].name, "");
+        lv_label_set_text(s_cell[i].pct, "");
+        lv_label_set_text(s_cell[i].price, "");
     }
     return page;
 }

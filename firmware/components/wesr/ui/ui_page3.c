@@ -55,6 +55,13 @@ lv_obj_t *Ui_Page3Create(void)
     lv_obj_set_pos(s_tick[4], 10 + UI_BIG_W - 40, 202);
 
     s_ohlc = label(page, &font_cn12, 8, 220);     /* "开高低量" 同上 */
+    /* 同上：LVGL label 默认是 "Text" */
+    lv_label_set_text(s_name, "");
+    lv_label_set_text(s_idx, "");
+    lv_label_set_text(s_pct, "");
+    lv_label_set_text(s_price, "");
+    lv_label_set_text(s_prev, "");
+    lv_label_set_text(s_ohlc, "");
     return page;
 }
 

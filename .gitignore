@@ -17,3 +17,5 @@ firmware/_pruned/
 firmware/components/ExternLib/
 # 字体是本机生成的构建产物（许可原因不入库，用 tools/gen_fonts.ps1 重建）
 firmware/components/wesr/ui/font_*.c
+# sdkconfig 由 sdkconfig.defaults 生成；本地这份里放着 WiFi 凭据（menuconfig），不能进仓库
+firmware/sdkconfig

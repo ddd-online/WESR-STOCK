@@ -1,0 +1,13 @@
+menu "WESR-STOCK"
+
+    config WESR_WIFI_SSID
+        string "WiFi SSID (2.4G)"
+        default ""
+        help
+            开发板要连的 2.4G 网络名。留空则开机直接显示「未配网」状态条，等 M4 的小程序 BLE 配网来填。
+
+    config WESR_WIFI_PASSWORD
+        string "WiFi password"
+        default ""
+
+endmenu
