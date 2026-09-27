@@ -40,12 +40,31 @@ lv_obj_t *Ui_Page1Create(void)
     lv_obj_set_style_border_side(left, LV_BORDER_SIDE_RIGHT, 0);
     lv_obj_clear_flag(left, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* 时钟尽量占满左栏：受宽度限制（"01:53" 在 104px 下约 290px 宽）——
-       x 必须留够，否则标签会溢出到右栏（实测溢出 2px 就把右栏顶部两行擦白） */
-    s_clock = mk_label(left, &font_num96, 10, 14);
+    /* 时间区（分隔线以上）：时钟 + 日期整组**水平垂直居中**。
+       用 flex 居中最稳：标签宽度随字体变化，绝对定位要么偏心、要么溢出到右栏
+       （之前 104px 不居中时溢出 2px 就把右栏顶部两行擦白了）。 */
+    lv_obj_t *timearea = lv_obj_create(left);
+    lv_obj_set_size(timearea, UI_P1_LEFT_W, 206);      /* 到温湿度分隔线为止 */
+    lv_obj_set_pos(timearea, 0, 0);
+    lv_obj_set_style_pad_all(timearea, 0, 0);
+    /* 点阵字体的墨迹不在字形盒正中（num96 数字偏上、cn16 汉字占满），
+       只靠 flex 居中会让整组**偏低 3.5px**。补一个底部 padding 把它顶回来：
+       实测墨迹 y=72..188（中心 130），区域中心 126.5 → 差 3.5，故 pad=7。
+       字体和日期格式都是定高定长，这个偏移是常数，不会随数据变。 */
+    lv_obj_set_style_pad_bottom(timearea, 7, 0);
+    lv_obj_set_style_pad_row(timearea, 6, 0);
+    lv_obj_set_style_radius(timearea, 0, 0);
+    lv_obj_set_style_border_width(timearea, 0, 0);
+    lv_obj_set_style_bg_opa(timearea, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(timearea, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(timearea, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(timearea, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    s_clock = mk_label(timearea, &font_num96, 0, 0);
     lv_label_set_text(s_clock, "00:00");
     /* 日期含汉字，必须用中文字体（数字字体没有 CJK 字形，会显示成方框） */
-    s_date = mk_label(left, &font_cn16, 18, 138);
+    s_date = mk_label(timearea, &font_cn16, 0, 0);
     lv_label_set_text(s_date, "--月--日");
 
     /* 温湿度：底部两栏，中间一条分隔线 */
