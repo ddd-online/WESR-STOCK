@@ -16,6 +16,7 @@
 #include "ui_page4.h"
 #include "wesr_logic.h"
 #include "app_state.h"
+#include "sensor_task.h"
 #include "i2c_equipment.h"   /* rtcTimeStruct_t / Rtc_GetTime（port_bsp） */
 #include <math.h>
 
@@ -85,7 +86,7 @@ static void feed_fake_page1(void)
 
     if (Lvgl_lock(-1)) {
         Ui_Page1SetClock(hhmm, date);
-        Ui_Page1SetEnv(24.6f, 58.0f);      /* 温湿度假数据，Task 14 换真传感器 */
+        /* 温湿度不在这里假填：sensor_task 起来后会覆盖（Task 14） */
         Ui_Page1Update(q, cfg.stocks, 8);
         Ui_Page2Update(s_min, q, cfg.stocks, 0, 8);
         Ui_Page3Update(&s_min[0], q, cfg.stocks, 0, 8);
@@ -105,11 +106,11 @@ static void fill_fake_status(void)
     snprintf(st->ip, sizeof st->ip, "192.168.1.42");
     st->rssi = -58;
     st->bt_connected = false;
-    st->battery_v = 3.95f;
-    st->battery_pct = 82;
+    st->battery_v = 0.0f;          /* 真值由 sensor_task 填（Task 14） */
+    st->battery_pct = 0;
     st->charging = false;
-    st->temp_c = 24.6f;
-    st->humi_pct = 58.0f;
+    st->temp_c = 0.0f;             /* 同上：真值由 sensor_task 填 */
+    st->humi_pct = 0.0f;
     st->sd_mounted = false;
     st->offline = false;
     st->closed = true;
@@ -120,9 +121,9 @@ static void fill_fake_status(void)
     st->group = 0;
     st->idx = 0;
     snprintf(st->fw, sizeof st->fw, "v0.1.0");
-    st->uptime_s = 3 * 86400u + 4 * 3600u + 12 * 60u;
-    st->heap_kb = 142;
-    st->psram_kb = 6200;
+    st->uptime_s = 0;
+    st->heap_kb = 0;
+    st->psram_kb = 0;
     AppState_Unlock();
 }
 
@@ -142,6 +143,7 @@ extern "C" void app_main(void)
     }
     fill_fake_status();
     feed_fake_page1();        /* 里面会读 AppState 渲染第 4 页，所以必须先填状态 */
+    Sensor_TaskStart();
     ESP_LOGI("wesr", "ui up, version %s", "0.1.0");
 
     /* 无屏验证通道：

@@ -14,6 +14,7 @@ idf_component_register(
     "logic/defaults.c"
     "app/cfg_store.c"
     "app/app_state.c"
+    "app/sensor_task.cpp"
     "port/board_init.cpp"
     "ui/ui_root.c"
     "ui/ui_page1.c"
