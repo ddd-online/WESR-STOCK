@@ -25,3 +25,4 @@ LV_FONT_DECLARE(font_num12);
 LV_FONT_DECLARE(font_num11);
 LV_FONT_DECLARE(font_num9);
 LV_FONT_DECLARE(font_cn16);
+LV_FONT_DECLARE(font_cn12);

@@ -121,8 +121,10 @@ void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
         }
     }
 
-    int y_line[WESR_MAX_POINTS];
-    int xs[WESR_MAX_POINTS];
+    /* 这三个数组加起来 4KB，放栈上会把小栈任务（main 默认 3.5KB）压爆 —— 实测栈溢出重启。
+       渲染只在持有 LVGL 锁时调用，不存在并发，用 static 复用即可。 */
+    static int y_line[WESR_MAX_POINTS];
+    static int xs[WESR_MAX_POINTS];
     for (uint16_t i = 0; i < m->n; i++) {
         float r = m->pts[i].price / prev_close;
         int idx = wesr_minute_index(m->pts[i].hhmm);
@@ -138,7 +140,7 @@ void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
        y_line 按"点"存，而 hatch45 按"列"取 y；点数少时列数远大于点数，
        直接传 y_line 会越界读。这里先按列线性插值出一份稠密的逐列 y。 */
     if (o->hatch) {
-        int col_y[400];
+        static int col_y[400];
         int x_l = xs[0], x_r = xs[m->n - 1];
         uint16_t seg = 0;
         for (int x = x_l; x <= x_r; x++) {

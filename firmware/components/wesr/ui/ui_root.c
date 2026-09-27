@@ -3,6 +3,8 @@
 #include "lvgl.h"
 #include "ui_theme.h"
 #include "ui_page1.h"
+#include "ui_page2.h"
+#include "ui_page3.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -89,6 +91,14 @@ static void build_pages(void)
     for (int i = 0; i < 4; i++) {
         if (i == 0) {                 /* 第 1 页已经实现（Task 11） */
             s_pages[i] = Ui_Page1Create();
+            continue;
+        }
+        if (i == 1) {                 /* 第 2 页：四宫格（Task 12） */
+            s_pages[i] = Ui_Page2Create();
+            continue;
+        }
+        if (i == 2) {                 /* 第 3 页：个股分时（Task 12） */
+            s_pages[i] = Ui_Page3Create();
             continue;
         }
         s_pages[i] = lv_obj_create(lv_scr_act());

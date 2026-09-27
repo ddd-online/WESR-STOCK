@@ -31,4 +31,9 @@ npx --yes lv_font_conv --font $sys --size 16 --bpp 1 --no-compress `
     -r $cnRange --format lvgl --lv-include lvgl.h `
     -o (Join-Path $out 'font_cn16.c') --force-fast-kern-format
 
+Write-Host "生成 font_cn12.c（状态条、昨收、开高低收量这类小字用）..."
+npx --yes lv_font_conv --font $sys --size 12 --bpp 1 --no-compress `
+    -r $cnRange --format lvgl --lv-include lvgl.h `
+    -o (Join-Path $out 'font_cn12.c') --force-fast-kern-format
+
 Write-Host "完成。"

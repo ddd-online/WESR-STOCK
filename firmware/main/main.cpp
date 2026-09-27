@@ -11,8 +11,38 @@
 #include "lvgl_bsp.h"
 #include "ui_root.h"
 #include "ui_page1.h"
+#include "ui_page2.h"
+#include "ui_page3.h"
 #include "wesr_logic.h"
 #include "i2c_equipment.h"   /* rtcTimeStruct_t / Rtc_GetTime（port_bsp） */
+#include <math.h>
+
+/* 第 2/3 页用的假分时数据（240 点，确定性生成，便于与设计稿对照） */
+static wesr_minute_t s_min[4];
+
+static void make_fake_minutes(float prev_close, float pct, uint32_t seed, wesr_minute_t *out)
+{
+    memset(out, 0, sizeof *out);
+    uint32_t s = seed;
+    float sum = 0;
+    for (int i = 0; i < 240; i++) {
+        int m = (i < 120) ? (9 * 60 + 30 + i) : (13 * 60 + (i - 120));
+        s = s * 1103515245u + 12345u;
+        float rnd = (float)((s >> 16) & 0x7fff) / 32767.0f;
+        float t = (float)i / 239.0f;
+        float price = prev_close * (1.0f + (pct / 100.0f) * t
+                                    + 0.006f * sinf((float)i * 0.13f)
+                                    + (rnd - 0.5f) * 0.003f);
+        sum += price;
+        out->pts[i].hhmm = (uint16_t)((m / 60) * 100 + (m % 60));
+        out->pts[i].price = price;
+        out->pts[i].avg = sum / (float)(i + 1);
+        out->pts[i].vol = 100.0f + rnd * 400.0f;
+    }
+    out->n = 240;
+    out->day = 20260927u;
+    out->valid = true;
+}
 
 /* Task 11：第 1 页先用固定假数据把版式验出来（真实行情在 Task 15 接）。
    假的报价刻意与设计稿一致，便于逐像素对照。 */
@@ -31,8 +61,13 @@ static void feed_fake_page1(void)
         q[i].last = last[i];
         q[i].prev_close = last[i] / (1.0f + pct[i] / 100.0f);
         q[i].chg_pct = pct[i];
+        q[i].open = q[i].prev_close * (1.0f + pct[i] / 300.0f);
+        q[i].high = last[i] * 1.006f;
+        q[i].low = q[i].prev_close * 0.994f;
+        q[i].vol_hands = (uint32_t)(10000 + i * 2500);
         q[i].valid = true;
     }
+    for (int i = 0; i < 4; i++) make_fake_minutes(q[i].prev_close, pct[i], 7u + (uint32_t)i * 21u, &s_min[i]);
 
     /* 时钟：RTC 没设过（年份 < 2020）就先显示固定值 */
     rtcTimeStruct_t t;
@@ -50,6 +85,8 @@ static void feed_fake_page1(void)
         Ui_Page1SetClock(hhmm, date);
         Ui_Page1SetEnv(24.6f, 58.0f);      /* 温湿度假数据，Task 14 换真传感器 */
         Ui_Page1Update(q, cfg.stocks, 8);
+        Ui_Page2Update(s_min, q, cfg.stocks, 0, 8);
+        Ui_Page3Update(&s_min[0], q, cfg.stocks, 0, 8);
         Lvgl_unlock();
     }
 }
@@ -82,9 +119,17 @@ extern "C" void app_main(void)
         uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
         if (now_ms - last_dump_ms >= 20000) {
             last_dump_ms = now_ms;
-            /* 每第 6 次（≈2 分钟）来一次全分辨率，用于核对文字与斜纹细节 */
-            if (++dump_no % 6 == 0) Board_DumpFbFull();
-            else                    Board_DumpFb();
+            /* 调试期轮换页面：1→2→3→1…，这样一次抓取能拿到三页的实拍 */
+            dump_no++;
+            uint8_t page = (uint8_t)(((dump_no - 1) % 3) + 1);
+            if (Lvgl_lock(-1)) {
+                Ui_ShowPage(page);
+                Lvgl_unlock();
+            }
+            vTaskDelay(pdMS_TO_TICKS(900));      /* 等 LVGL 刷完这一帧再回读显存 */
+            /* 隔次全分辨率：页面在 1→2→3 轮转，所以 6 次（≈2 分钟）能把三页各全分辨率抓一遍 */
+            if (dump_no % 2 == 0) Board_DumpFbFull();
+            else                  Board_DumpFb();
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
