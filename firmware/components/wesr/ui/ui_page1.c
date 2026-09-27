@@ -40,27 +40,30 @@ lv_obj_t *Ui_Page1Create(void)
     lv_obj_set_style_border_side(left, LV_BORDER_SIDE_RIGHT, 0);
     lv_obj_clear_flag(left, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_clock = mk_label(left, &font_num78, 14, 14);
+    /* 时钟尽量占满左栏：受宽度限制（"01:53" 在 104px 下约 290px 宽）——
+       x 必须留够，否则标签会溢出到右栏（实测溢出 2px 就把右栏顶部两行擦白） */
+    s_clock = mk_label(left, &font_num96, 10, 14);
     lv_label_set_text(s_clock, "00:00");
-    s_date = mk_label(left, &font_cn16, 18, 104);
+    /* 日期含汉字，必须用中文字体（数字字体没有 CJK 字形，会显示成方框） */
+    s_date = mk_label(left, &font_cn16, 18, 138);
     lv_label_set_text(s_date, "--月--日");
 
     /* 温湿度：底部两栏，中间一条分隔线 */
     lv_obj_t *line = lv_obj_create(left);
     lv_obj_set_size(line, UI_P1_LEFT_W - 24, 1);
-    lv_obj_set_pos(line, 12, 208);
+    lv_obj_set_pos(line, 12, 206);
     lv_obj_set_style_bg_color(line, lv_color_black(), 0);
     lv_obj_set_style_border_width(line, 0, 0);
     lv_obj_set_style_radius(line, 0, 0);
 
-    lv_obj_t *t_lb = mk_label(left, &font_cn16, 48, 218);
+    lv_obj_t *t_lb = mk_label(left, &font_cn16, 48, 214);
     lv_label_set_text(t_lb, "温度");
-    s_temp = mk_label(left, &font_num19, 30, 236);
+    s_temp = mk_label(left, &font_num25, 26, 232);
     lv_label_set_text(s_temp, "--.-");
 
-    lv_obj_t *h_lb = mk_label(left, &font_cn16, 200, 218);
+    lv_obj_t *h_lb = mk_label(left, &font_cn16, 200, 214);
     lv_label_set_text(h_lb, "湿度");
-    s_humi = mk_label(left, &font_num19, 190, 236);
+    s_humi = mk_label(left, &font_num25, 186, 232);
     lv_label_set_text(s_humi, "--");
 
     /* ---- 右栏 100px：8 行 ---- */

@@ -95,6 +95,15 @@ extern "C" void app_main(void)
         uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
         if (now_ms - last_dump_ms >= 15000) {
             last_dump_ms = now_ms;
+            /* 强制整屏重绘再回读：LVGL 只刷新变化区域，镜像里可能残留旧像素，
+               不强制的话 dump 出来的画面可能是"部分陈旧"的（实测丢过 1px 分隔线）。 */
+            if (Lvgl_lock(-1)) {
+                lv_obj_invalidate(lv_scr_act());
+                Lvgl_unlock();
+            }
+            /* 1.5 秒：全屏重绘要走两块 PSRAM 缓冲 + 120k 像素逐点写入 + 面板刷新，
+               等太短会 dump 到"画了一半"的显存（实测右栏顶部偶尔缺行）*/
+            vTaskDelay(pdMS_TO_TICKS(1500));
             Board_DumpFbFull();
         }
 #endif

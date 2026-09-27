@@ -169,6 +169,8 @@ void Ui_ShowPage(uint8_t page)
         if (on) lv_obj_clear_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN);
         else    lv_obj_add_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN);
     }
+    /* 整屏重绘：1-bit 屏上增量刷新容易留下残影/缺线，切页就全刷一次（15KB，代价可忽略） */
+    lv_obj_invalidate(lv_scr_act());
 }
 
 uint8_t Ui_CurrentPage(void) { return s_page_now; }
