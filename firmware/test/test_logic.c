@@ -195,10 +195,22 @@ static void test_nav(void)
     wesr_nav_init(&n, 8);
     wesr_nav_click(&n);                      /* 第 2 页 */
     assert(wesr_nav_group_start(&n) == 0);
+    assert(wesr_nav_minute_key(&n) == 0);    /* 第 2 页组 1 → 分时缓存的归属是第 0 只 */
     wesr_nav_double(&n);
     assert(n.group == 1 && wesr_nav_group_start(&n) == 4);
+    /* 组 2 的归属必须是 4（不是 0）——休市补数据的 need 全靠这个值判断，
+       之前只看 valid 导致第 2 组永远不补拉，分时被画成直线 */
+    assert(wesr_nav_minute_key(&n) == 4);
     wesr_nav_double(&n);
     assert(n.group == 0);
+
+    wesr_nav_init(&n, 8);
+    wesr_nav_click(&n); wesr_nav_click(&n);  /* 第 3 页 */
+    assert(wesr_nav_minute_key(&n) == 0);    /* 第 3 页看 idx 那一只 */
+    wesr_nav_double(&n);
+    assert(wesr_nav_minute_key(&n) == 1);
+    for (int i = 0; i < 6; i++) wesr_nav_double(&n);
+    assert(n.idx == 7 && wesr_nav_minute_key(&n) == 7);   /* 8 只：最后一只是 7 */
 
     wesr_nav_init(&n, 3);                    /* 只有 3 只：组 2 不存在 */
     wesr_nav_click(&n);

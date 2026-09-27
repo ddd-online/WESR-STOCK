@@ -94,6 +94,11 @@ powershell -File tools/gen_fonts.ps1
 主机侧读串口、把 `FB-BEGIN-FULL` … `FB-END` 之间的行渲染成 PNG 就能逐像素核对画面。
 **量产固件请关掉**（默认关）：它每 15 秒占用串口约 10 秒。
 
+这条通道**只能读不能写**：本机（S3 原生 USB-Serial-JTAG，COM5）往板子写字节会
+`Semaphore timeout`，.NET `SerialPort.Write` 和 pyserial 都一样 —— 所以别指望从串口
+"按" KEY，要验证某个页面状态就让固件开机直接进那个状态（`s_nav.page/group/idx` +
+`publish_nav()` + `Ui_ShowPage()`），烧一次看一屏，量完再撤掉。
+
 ## 8. 目录
 
 ```

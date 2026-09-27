@@ -38,3 +38,8 @@ uint8_t wesr_nav_group_start(const wesr_nav_t *n)
 {
     return (n->group == 1 && n->count > 4) ? 4 : 0;
 }
+
+uint8_t wesr_nav_minute_key(const wesr_nav_t *n)
+{
+    return (n->page == 3) ? n->idx : wesr_nav_group_start(n);
+}

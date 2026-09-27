@@ -70,6 +70,10 @@ void    wesr_nav_click(wesr_nav_t *n);
 void    wesr_nav_double(wesr_nav_t *n);
 void    wesr_nav_set_count(wesr_nav_t *n, uint8_t count);
 uint8_t wesr_nav_group_start(const wesr_nav_t *n);
+/* 当前页要的分时数据对应哪只股票（minutes[0] 的归属）：
+   第 2 页 = 组起始索引（后面 3 格是 start+1..start+3），第 3 页 = 单只 idx。
+   休市时靠它判断手上的分时缓存是不是"这一屏要的那只"，见 quote_service 的 need。 */
+uint8_t wesr_nav_minute_key(const wesr_nav_t *n);
 uint8_t wesr_nav_pages(void);
 
 typedef enum { WESR_FETCH_NONE = 0, WESR_FETCH_QUOTES, WESR_FETCH_MINUTES } wesr_fetch_t;

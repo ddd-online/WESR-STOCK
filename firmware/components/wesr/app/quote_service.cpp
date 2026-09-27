@@ -223,9 +223,8 @@ static bool fetch_minute(const char *code, wesr_minute_t *out, wesr_quote_t *qou
 
 static bool fetch_page_minutes(void)
 {
-    uint8_t start = wesr_nav_group_start(&s_nav);
     uint8_t want = (s_nav.page == 3) ? 1 : 4;
-    uint8_t base = (s_nav.page == 3) ? s_nav.idx : start;
+    uint8_t base = wesr_nav_minute_key(&s_nav);
     bool all_ok = true;
     for (int i = 0; i < want; i++) {
         uint8_t idx = (uint8_t)(base + i);
@@ -243,6 +242,7 @@ static bool fetch_page_minutes(void)
             AppState_Status()->closed = closed;
             AppState_Status()->data_day = day;
             AppState_Status()->minutes_ok = true;
+            AppState_Status()->minutes_key = base;   /* 缓存归属：休市判 need 要用 */
             AppState_Unlock();
         } else {
             all_ok = false;
@@ -304,7 +304,7 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
 
     wesr_sched_t sched;
     wesr_sched_init(&sched, cfg->refresh_sec);
-    uint8_t last_page = 0;
+    uint8_t last_page = 0, last_group = 0xFF, last_idx = 0xFF;
 
     /* 开机先补一次：休市/非交易时段本来不发请求，但那样画面上永远是空的；
        设计要的是"休市时显示上一交易日的收盘数据"，所以开机先拉一次快照 + 拉一只分时
@@ -330,6 +330,7 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
         if (ok2) AppState_Status()->minutes_ok = true;
         AppState_Status()->closed = closed;
         AppState_Status()->data_day = day;
+        AppState_Status()->minutes_key = 0;      /* 开机只拉了第 1 组（base=0） */
         AppState_Status()->offline = !(ok1 || ok2);
         AppState_Unlock();
         ESP_LOGI(TAG, "bootstrap: quotes=%d minute=%d closed=%d day=%lu", (int)ok1, (int)ok2,
@@ -348,9 +349,16 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
         AppState_Lock();
         uint8_t page = AppState_Status()->page ? AppState_Status()->page : 1;
         bool srv_closed = AppState_Status()->closed;
+        /* 换组/换股也要立刻到期：否则休市时下一次网络请求要等一分钟的 idle 重检 */
+        uint8_t group = AppState_Status()->group, idx = AppState_Status()->idx;
         AppState_Unlock();
         s_nav.page = page;          /* 内部页状态必须跟着走，否则刷新永远刷错页 */
-        if (page != last_page) { wesr_sched_page(&sched, page); last_page = page; }
+        s_nav.group = group;
+        s_nav.idx = idx;
+        if (page != last_page || group != last_group || idx != last_idx) {
+            wesr_sched_page(&sched, page);
+            last_page = page; last_group = group; last_idx = idx;
+        }
         /* 配网模式 3 分钟无操作自动退出（M4 起这里还会关掉 BLE 广播） */
         AppState_Lock();
         bool pair_timeout = AppState_Status()->pairing &&
@@ -367,9 +375,12 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
         if (srv_closed) {
             AppState_Lock();
             wesr_status_t *st = AppState_Status();
-            if (page == 1)      need = !st->quotes[0].valid;
-            else if (page == 2) need = !st->minutes[0].valid;
-            else if (page == 3) need = !st->minutes[0].valid;
+            if (page == 1) need = !st->quotes[0].valid;
+            /* 第 2/3 页要连"缓存归属"一起比：只看 valid 的话，切到第 2 组（或第 3 页
+               换股）时缓存里还是上一组/上一只的分时，会被当成已有数据 → 根本不补拉，
+               于是拿第 1 组的价格去配第 2 组的昨收画图，整条线被 clamp 成直线。 */
+            else if (page == 2 || page == 3)
+                need = !st->minutes[0].valid || st->minutes_key != wesr_nav_minute_key(&s_nav);
             AppState_Unlock();
         }
         bool may_fetch = (trading && !srv_closed) || (srv_closed && need);
