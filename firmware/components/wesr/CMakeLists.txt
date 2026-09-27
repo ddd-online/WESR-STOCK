@@ -12,6 +12,7 @@ idf_component_register(
     "logic/sched.c"
     "logic/chart_draw.c"
     "logic/defaults.c"
+    "logic/ble_proto.c"
     "app/cfg_store.c"
     "app/app_state.c"
     "app/sensor_task.cpp"

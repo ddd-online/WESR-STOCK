@@ -415,6 +415,128 @@ static void test_weekday(void)
     assert(wesr_weekday(2024, 3, 1) == 5);    /* 周五 */
 }
 
+/* BLE 配网协议：分片重组 + 报文构造 + 股票列表校验（spec §10） */
+static void test_ble_proto(void)
+{
+    /* 1) 分片重组：20 字节一片，攒到 '\n' 才成一条 */
+    wesr_ble_rx_t rx; wesr_ble_rx_reset(&rx);
+    char msg[256];
+    const char *s = "{\"cmd\":\"setWifi\",\"ssid\":\"waveware_private\",\"pass\":\"12345678\"}\n";
+    uint16_t total = (uint16_t)strlen(s), sent = 0;
+    bool got = false;
+    while (total - sent > 0) {
+        uint16_t n = wesr_ble_chunk_len(total, sent);
+        got = wesr_ble_rx_push(&rx, (const uint8_t *)s + sent, n);
+        sent += n;
+    }
+    assert(got);                                     /* 最后一包才凑齐 */
+    assert(wesr_ble_rx_take(&rx, msg, sizeof msg) == strlen(s) - 1);
+    assert(strcmp(msg, "{\"cmd\":\"setWifi\",\"ssid\":\"waveware_private\",\"pass\":\"12345678\"}") == 0);
+    assert(wesr_ble_rx_take(&rx, msg, sizeof msg) == 0);   /* 取空了 */
+
+    /* 2) 一次写进两条报文：要能逐条取出 */
+    wesr_ble_rx_reset(&rx);
+    const char *two = "{\"cmd\":\"hello\"}\n{\"cmd\":\"scan\"}\n";
+    assert(wesr_ble_rx_push(&rx, (const uint8_t *)two, (uint16_t)strlen(two)));
+    assert(wesr_ble_rx_take(&rx, msg, sizeof msg) == 15 && strcmp(msg, "{\"cmd\":\"hello\"}") == 0);
+    assert(wesr_ble_rx_take(&rx, msg, sizeof msg) == 14 && strcmp(msg, "{\"cmd\":\"scan\"}") == 0);
+
+    /* 3) 超长（>4KB）不含 '\n'：丢掉这条，在下一个 '\n' 处重新同步 */
+    wesr_ble_rx_reset(&rx);
+    uint8_t junk[64]; memset(junk, 'x', sizeof junk);
+    for (int i = 0; i < 100; i++)
+        assert(!wesr_ble_rx_push(&rx, junk, sizeof junk));    /* 6400 > 4096，全程没报文 */
+    assert(rx.len == 0 && rx.drop);
+    assert(!wesr_ble_rx_push(&rx, (const uint8_t *)"tail\n", 5));  /* 残片尾在 '\n' 处丢掉 */
+    assert(!rx.drop);
+    assert(wesr_ble_rx_push(&rx, (const uint8_t *)"{\"cmd\":\"hello\"}\n", 16));
+    assert(wesr_ble_rx_take(&rx, msg, sizeof msg) == 15);
+
+    /* 4) 分片长度：整条 41 字节 → 20/20/1 */
+    assert(wesr_ble_chunk_len(41, 0) == 20);
+    assert(wesr_ble_chunk_len(41, 20) == 20);
+    assert(wesr_ble_chunk_len(41, 40) == 1);
+    assert(wesr_ble_chunk_len(41, 41) == 0);
+    assert(wesr_ble_chunk_len(0, 0) == 0);
+
+    /* 5) 取值：字符串里的冒号/逗号不能截断，键不能撞（name vs nickname） */
+    const char *j = "{\"cmd\":\"setWifi\",\"ssid\":\"a:b,c\",\"pass\":\"p\\\"q\"}";
+    char v[64]; long iv;
+    assert(wesr_ble_get_str(j, "ssid", v, sizeof v) && strcmp(v, "a:b,c") == 0);
+    assert(wesr_ble_get_str(j, "pass", v, sizeof v) && strcmp(v, "p\"q") == 0);
+    assert(!wesr_ble_get_str(j, "ss", v, sizeof v));      /* 不做前缀匹配 */
+    assert(wesr_ble_cmd_is(j, "setWifi") && !wesr_ble_cmd_is(j, "set"));
+    const char *k = "{\"cmd\":\"setInterval\",\"sec\":30}";
+    assert(wesr_ble_get_int(k, "sec", &iv) && iv == 30);
+    assert(!wesr_ble_get_int(k, "no_such", &iv));         /* 缺字段要报错，别默认 0 */
+
+    /* 6) 股票代码校验 */
+    assert(wesr_code_valid("sh600519") && wesr_code_valid("sz000858") && wesr_code_valid("bj430047"));
+    assert(!wesr_code_valid("600519") && !wesr_code_valid("sh60051") && !wesr_code_valid("sh6005199"));
+    assert(!wesr_code_valid("SH600519") && !wesr_code_valid(""));
+
+    /* 7) setStocks：3 只，mark 缺省时自动取名字第一个字 */
+    wesr_stock_cfg_t list[WESR_MAX_STOCKS]; const char *err = NULL;
+    const char *items = "{\"cmd\":\"setStocks\",\"items\":["
+        "{\"code\":\"sh600519\",\"name\":\"贵州茅台\"},"
+        "{\"code\":\"sz000858\",\"name\":\"五粮液\",\"mark\":\"酒\"},"
+        "{\"code\":\"sh000300\",\"name\":\"沪深300\"}]}";
+    int n = wesr_ble_parse_items(items, list, WESR_MAX_STOCKS, &err);
+    assert(n == 3 && err == NULL);
+    assert(strcmp(list[0].code, "sh600519") == 0 && strcmp(list[0].mark, "贵") == 0);
+    assert(strcmp(list[1].mark, "酒") == 0);             /* 给了 mark 就用给的 */
+    assert(strcmp(list[2].name, "沪深300") == 0);
+
+    /* 8) setStocks 出错：代码格式 / 超过 8 只 / 缺 items */
+    assert(wesr_ble_parse_items("{\"items\":[{\"code\":\"600519\",\"name\":\"x\"}]}",
+                                list, WESR_MAX_STOCKS, &err) == -1 && strcmp(err, "E_CODE_FMT") == 0);
+    assert(wesr_ble_parse_items(
+        "{\"items\":[{\"code\":\"sh600519\",\"name\":\"a\"},{\"code\":\"sh600520\",\"name\":\"b\"},"
+        "{\"code\":\"sh600521\",\"name\":\"c\"},{\"code\":\"sh600522\",\"name\":\"d\"},"
+        "{\"code\":\"sh600523\",\"name\":\"e\"},{\"code\":\"sh600524\",\"name\":\"f\"},"
+        "{\"code\":\"sh600525\",\"name\":\"g\"},{\"code\":\"sh600526\",\"name\":\"h\"},"
+        "{\"code\":\"sh600527\",\"name\":\"i\"}]}",
+        list, WESR_MAX_STOCKS, &err) == -1 && strcmp(err, "E_TOO_MANY") == 0);
+    assert(wesr_ble_parse_items("{\"cmd\":\"setStocks\"}", list, WESR_MAX_STOCKS, &err) == -1
+           && strcmp(err, "E_ARG") == 0);
+
+    /* 9) 回包：关键字段在不在、长度对不对 */
+    char out[512];
+    wesr_ble_status_t st = { "0.1.0", "A0B1C2D3E4F5", "waveware_private", "10.12.254.79",
+                             "connected", 96, 4090, -52, 8, 2, 1, 0 };
+    int len = wesr_ble_fmt_status(out, sizeof out, &st);
+    assert(len > 0 && len <= WESR_BLE_MSG_MAX);
+    assert(strstr(out, "\"ev\":\"status\"") && strstr(out, "\"batt_pct\":96"));
+    assert(strstr(out, "\"rssi\":-52") && strstr(out, "\"cfg_count\":8"));
+    assert(!strstr(out, "pass"));                        /* 密码绝不出现在回包 */
+
+    assert(wesr_ble_fmt_ack(out, sizeof out, "setWifi") > 0
+           && strstr(out, "\"ev\":\"ack\"") && strstr(out, "\"cmd\":\"setWifi\""));
+    assert(wesr_ble_fmt_err(out, sizeof out, "E_WIFI", "connect failed") > 0
+           && strstr(out, "E_WIFI"));
+
+    wesr_ap_t aps[2] = { { "waveware_private", -52 }, { "TP-LINK_5G", -71 } };
+    assert(wesr_ble_fmt_scan(out, sizeof out, aps, 2) > 0
+           && strstr(out, "\"ev\":\"scanResult\"") && strstr(out, "\"ssid\":\"TP-LINK_5G\""));
+
+    wesr_app_cfg_t cfg; wesr_cfg_defaults(&cfg);
+    cfg.count = 2;
+    snprintf(cfg.stocks[0].code, sizeof cfg.stocks[0].code, "sh600519");
+    snprintf(cfg.stocks[0].name, sizeof cfg.stocks[0].name, "贵州茅台");
+    snprintf(cfg.stocks[0].mark, sizeof cfg.stocks[0].mark, "贵");
+    snprintf(cfg.stocks[1].code, sizeof cfg.stocks[1].code, "sz000858");
+    snprintf(cfg.stocks[1].name, sizeof cfg.stocks[1].name, "五粮液");
+    snprintf(cfg.stocks[1].mark, sizeof cfg.stocks[1].mark, "酒");
+    assert(wesr_ble_fmt_cfg(out, sizeof out, &cfg) > 0 && strstr(out, "\"ev\":\"cfg\""));
+    assert(strstr(out, "\"code\":\"sz000858\"") && !strstr(out, "\"pass\""));
+
+    /* 10) 目标缓冲太小：宁可返回 -1，也不许截断出半条 JSON */
+    assert(wesr_ble_fmt_status(out, 20, &st) == -1);
+    assert(wesr_ble_fmt_cfg(out, 20, &cfg) == -1);
+
+    printf("  ble_proto ok\n");
+}
+
 int main(void)
 {
     test_quote();
@@ -431,6 +553,7 @@ int main(void)
     test_bmp_primitives();
     test_chart_render();
     test_defaults_and_code();
+    test_ble_proto();
     printf("all logic tests passed\n");
     return 0;
 }

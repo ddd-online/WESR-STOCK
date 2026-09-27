@@ -125,6 +125,48 @@ typedef struct {
 void wesr_cfg_defaults(wesr_app_cfg_t *cfg);
 bool wesr_code_valid(const char *code);
 
+/* ---------- BLE 配网协议（spec §10；纯 C，不依赖 IDF，宿主机可测） ---------- */
+#define WESR_BLE_CHUNK   20      /* 单包字节数上限（iOS 不协商 MTU，20 最稳） */
+#define WESR_BLE_MSG_MAX 4096    /* 单条报文上限，超限丢弃本次会话 */
+
+/* 接收：字节流 → 整条报文（按 '\n' 切；'\n' 本身不算内容） */
+typedef struct { char buf[WESR_BLE_MSG_MAX + 1]; uint16_t len; bool drop; } wesr_ble_rx_t;
+void     wesr_ble_rx_reset(wesr_ble_rx_t *rx);
+bool     wesr_ble_rx_push(wesr_ble_rx_t *rx, const uint8_t *d, uint16_t n);
+uint16_t wesr_ble_rx_take(wesr_ble_rx_t *rx, char *out, uint16_t cap);
+
+/* 发送：整条报文 → 20 字节一片；返回 0 表示发完了 */
+uint16_t wesr_ble_chunk_len(uint16_t total, uint16_t sent);
+
+/* 极简 JSON 取值（报文集是我们自己冻结的，不做通用解析） */
+bool wesr_ble_cmd_is(const char *json, const char *cmd);
+bool wesr_ble_get_str(const char *json, const char *key, char *out, uint16_t cap);
+bool wesr_ble_get_int(const char *json, const char *key, long *out);
+
+/* setStocks 的 items 校验：返回只数；出错返回 -1 并把错误码写进 *err（spec §10） */
+int wesr_ble_parse_items(const char *json, wesr_stock_cfg_t *out, uint8_t max,
+                         const char **err);
+#define WESR_BLE_E_ARG      "E_ARG"
+#define WESR_BLE_E_CODE_FMT "E_CODE_FMT"
+#define WESR_BLE_E_TOO_MANY "E_TOO_MANY"
+#define WESR_BLE_E_SSID     "E_SSID"
+#define WESR_BLE_E_PASS     "E_PASS"
+#define WESR_BLE_E_NVS      "E_NVS"
+#define WESR_BLE_E_WIFI     "E_WIFI"
+
+/* 回包构造：返回字节数；放不下返回 -1（宁可报错也不给半条 JSON） */
+typedef struct { char ssid[33]; int8_t rssi; } wesr_ap_t;
+typedef struct {
+    const char *fw, *mac, *ssid, *ip, *wifi_state;   /* wifi_state: connected/connecting/idle */
+    int   batt_pct, batt_mv, rssi;
+    uint8_t cfg_count, page, group, idx;
+} wesr_ble_status_t;
+int wesr_ble_fmt_status(char *out, uint16_t cap, const wesr_ble_status_t *s);
+int wesr_ble_fmt_ack (char *out, uint16_t cap, const char *cmd);
+int wesr_ble_fmt_err (char *out, uint16_t cap, const char *code, const char *msg);
+int wesr_ble_fmt_scan(char *out, uint16_t cap, const wesr_ap_t *aps, uint8_t n);
+int wesr_ble_fmt_cfg (char *out, uint16_t cap, const wesr_app_cfg_t *cfg);
+
 #ifdef __cplusplus
 }
 #endif
