@@ -15,6 +15,7 @@ typedef struct {
     char     ip[25];
     int8_t   rssi;
     bool     bt_connected;
+    char     mac[18];         /* 蓝牙地址 AA:BB:..：配网时给小程序显示，用来认哪台板子 */
     /* 电源与环境 */
     float    battery_v;
     uint8_t  battery_pct;

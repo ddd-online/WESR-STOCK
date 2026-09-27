@@ -19,6 +19,7 @@ idf_component_register(
     "app/net_task.cpp"
     "app/quote_service.cpp"
     "app/input_task.cpp"
+    "app/ble_task.cpp"
     "port/board_init.cpp"
     "ui/ui_root.c"
     "ui/ui_page1.c"
@@ -37,4 +38,4 @@ idf_component_register(
     INCLUDE_DIRS "include" "ui"
     REQUIRES port_bsp app_bsp lvgl__lvgl
     # 不拉 json/cJSON：解析是手写的（IDF v6 起 json 组件也不再内置）
-    PRIV_REQUIRES esp_wifi esp_netif esp_event lwip nvs_flash esp_http_client mbedtls esp_timer)
+    PRIV_REQUIRES esp_wifi esp_netif esp_event lwip nvs_flash esp_http_client mbedtls esp_timer bt)

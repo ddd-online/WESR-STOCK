@@ -8,6 +8,7 @@
 #include "ui_page3.h"
 #include "ui_page4.h"
 #include "ui_root.h"
+#include "ble_task.h"
 #include "i2c_equipment.h"
 #include "lvgl_bsp.h"
 #include "esp_http_client.h"
@@ -70,6 +71,7 @@ void Quote_NavSetPairing(bool on)
     AppState_Status()->pairing = on;
     AppState_Status()->pairing_ms = (uint32_t)(esp_timer_get_time() / 1000);
     AppState_Unlock();
+    Ble_Enable(on);          /* 配网模式 = 蓝牙广播开（M4） */
     Quote_RefreshUi();
     ESP_LOGI(TAG, "KEY long press -> pairing %s", on ? "on" : "off");
 }
@@ -305,6 +307,7 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
     wesr_sched_t sched;
     wesr_sched_init(&sched, cfg->refresh_sec);
     uint8_t last_page = 0, last_group = 0xFF, last_idx = 0xFF;
+    bool last_bt = false;
 
     /* 开机先补一次：休市/非交易时段本来不发请求，但那样画面上永远是空的；
        设计要的是"休市时显示上一交易日的收盘数据"，所以开机先拉一次快照 + 拉一只分时
@@ -349,9 +352,13 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
         AppState_Lock();
         uint8_t page = AppState_Status()->page ? AppState_Status()->page : 1;
         bool srv_closed = AppState_Status()->closed;
+        bool bt_now = AppState_Status()->bt_connected;
         /* 换组/换股也要立刻到期：否则休市时下一次网络请求要等一分钟的 idle 重检 */
         uint8_t group = AppState_Status()->group, idx = AppState_Status()->idx;
         AppState_Unlock();
+        /* 蓝牙连接状态由 NimBLE 回调写，但回调里不能碰 LVGL（主机任务栈只有 4KB），
+           所以顶栏图标在这里跟着刷。 */
+        if (bt_now != last_bt) { last_bt = bt_now; Quote_RefreshUi(); }
         s_nav.page = page;          /* 内部页状态必须跟着走，否则刷新永远刷错页 */
         s_nav.group = group;
         s_nav.idx = idx;
@@ -367,6 +374,7 @@ void Quote_Run(const wesr_app_cfg_t *cfg)
         AppState_Unlock();
         if (pair_timeout) {
             ESP_LOGI(TAG, "pairing timeout");
+            Ble_Enable(false);
             Quote_RefreshUi();
         }
 
