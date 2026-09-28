@@ -66,7 +66,7 @@ powershell -File tools/gen_fonts.ps1
 | --- | --- |
 | 单击 | 切页 1→2→3→4→1 |
 | 双击 | 第 2 页切组（1–4 / 5–8）；第 3 页换股（`1/8`→`2/8`…）；第 1、4 页无动作 |
-| 长按 3 秒 | 进配网模式（顶栏反白「配网模式 · 等待小程序」，3 分钟无操作自动退出） |
+| 长按 3 秒 | 进/出配网模式（状态条反白「配网模式 · 等待小程序」，同时开 BLE 广播；3 分钟无操作自动退出） |
 
 去抖与单击/双击/长按判定交给官方 `port_bsp/button_bsp.c`（multi_button），
 固件只做"事件 → 语义"的映射（`app/input_task.cpp`）。
@@ -116,14 +116,42 @@ firmware/
 
 ## 9. 已知限制（v1）
 
-- **无 BLE 配网、无 OTA、SD 卡未使用**（都在 spec 的"范围外"里；M4 计划做小程序 BLE 配网）。
+- **无 OTA、SD 卡未使用**（在 spec 的"范围外"里）。BLE 配网见 §11。
+- **配网模式下不拉行情**：BLE 常驻要 ~50KB 内部 RAM，TLS 握手就起不来了（串口会打
+  `http open failed (28674)`）。退出配网会 `nimble_port_deinit()` 把内存还回去，约 10 秒内自动恢复。
 - 充电状态是"电压在涨"的**启发式推断**（板子的 CHG 只是 LED，没接 GPIO），插着 USB 但电压平稳时会显示"未充电"。
 - 串口日志里的中文可能显示成 `?`：IDF v6 控制台默认非 UTF-8（`chcp 65001` 或系统开 UTF-8 可解）。
 - 第 2、3 页的分时接口在部分网络里会被拦：固件已内置双主机回退
   （`web.ifzq.gtimg.cn` → `proxy.finance.qq.com/ifzqgtimg/...`，同一份数据）。
 - 标题栏的 WiFi/蓝牙/电池图标用的是 LVGL 内置符号字体，与设计稿里手绘的图标形状略有差异。
 
-## 10. 参考资料
+## 10. BLE 配网（M4）
+
+长按 KEY 3 秒进配网模式 → 板子广播 Nordic UART Service（名字 `WESR-STOCK`）→
+手机小程序改 WiFi、改股票池、对时。协议（UUID、20 字节分片、8 条命令、错误码）
+在 `../docs/superpowers/specs/2026-09-27-wesr-stock-design.md` §10。
+
+| 位置 | 说明 |
+| --- | --- |
+| `components/wesr/logic/ble_proto.c` | 协议编解码（纯 C，宿主机 `test/` 里测） |
+| `components/wesr/app/ble_task.cpp` | NimBLE NUS 外设 + 命令执行（独立任务） |
+| `tools/ble_probe.py` | **PC 当假手机**的自检客户端（`pip install bleak`） |
+| `../miniprogram/` | 微信小程序三屏 |
+
+没有手机也能验收（板子先进配网模式）：
+
+```powershell
+python tools\ble_probe.py                 # 跑全部 8 条命令
+python tools\ble_probe.py --only hello    # 只跑一条
+python tools\ble_probe.py --addr 28:84:85:58:FA:CE   # 扫描偶尔抽风时直连
+python tools\ble_probe.py --cmd '{"cmd":"setInterval","sec":15}'   # 临时改设置/恢复
+```
+
+**内存是这块板子的硬约束**（BLE 50KB vs TLS/整屏刷新 DMA 各要 15~40KB 连续内部内存），
+踩过的坑与实测数字写在 `../docs/superpowers/plans/2026-09-28-wesr-stock-ble-provisioning.md`
+的「实机约束」一节 —— 动蓝牙相关代码前先读那一节。
+
+## 11. 参考资料
 
 - 板卡知识库：`../KNOWLEDGE.md`（引脚、I2C 地址、屏特性、环境版本）
 - 官方资料归档：`../references/`（`official/` 官方示例包、`datasheets/` 原理图与手册、`upstream/` 文档离线副本）
