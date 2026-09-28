@@ -331,6 +331,7 @@ void Quote_Run(wesr_app_cfg_t *cfg)
     wesr_sched_init(&sched, cfg->refresh_sec);
     uint8_t last_page = 0, last_group = 0xFF, last_idx = 0xFF;
     bool last_bt = false;
+    bool last_trading = true;      /* 开机那次 bootstrap 已经拉过了，别刚开机又多拉一次 */
     uint32_t last_cfg_gen = 0;
 
     /* 开机先补一次：休市/非交易时段本来不发请求，但那样画面上永远是空的；
@@ -393,6 +394,20 @@ void Quote_Run(wesr_app_cfg_t *cfg)
             sched.interval_s = s_cfg->refresh_sec ? s_cfg->refresh_sec : 15;
             last_page = page; last_group = group; last_idx = idx; last_cfg_gen = cfg_gen;
         }
+        /* 跨进一个新的交易时段（早上开盘、下午开盘）：缓存里还挂着上一交易日的收盘数据，
+           服务端那句"休市"也还是上一时段留下的 true —— 两者合起来让 need 恒为 false，
+           于是一整天都不拉新数据（实测：把 RTC 拨到 09:29:40，09:30 之后一条请求都没有）。
+           所以进时段时主动作废缓存，并让调度立刻到期。
+           判据用"进入交易时段"而不是"日期变了"：半夜零点作废只会白拉一次昨天的数据。 */
+        if (trading && !last_trading) {
+            AppState_Lock();
+            AppState_Status()->quotes[0].valid = false;
+            AppState_Status()->minutes[0].valid = false;
+            AppState_Unlock();
+            wesr_sched_page(&sched, page);
+            ESP_LOGI(TAG, "交易时段开始，作废缓存立刻重拉");
+        }
+        last_trading = trading;
         /* 配网模式 3 分钟无操作自动退出（M4 起这里还会关掉 BLE 广播） */
         AppState_Lock();
         bool pair_timeout = AppState_Status()->pairing &&
