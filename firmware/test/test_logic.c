@@ -392,8 +392,9 @@ static void test_defaults_and_code(void)
     wesr_cfg_defaults(&cfg);
     assert(cfg.count == 8);
     assert(cfg.refresh_sec == 15);
-    assert(strcmp(cfg.stocks[0].code, "sh600519") == 0);
-    assert(strcmp(cfg.stocks[0].mark, "贵") == 0);
+    assert(strcmp(cfg.stocks[0].code, "sh603936") == 0);
+    assert(strcmp(cfg.stocks[0].mark, "博") == 0);       /* 首字自动取 */
+    assert(strcmp(cfg.stocks[7].code, "sz002815") == 0);
     for (int i = 0; i < cfg.count; i++) assert(wesr_code_valid(cfg.stocks[i].code));
 
     assert(wesr_code_valid("sh600519"));
