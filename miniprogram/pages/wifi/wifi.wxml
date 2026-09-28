@@ -1,0 +1,21 @@
+<view class="pad">
+  <view class="card">
+    <button class="btn" bindtap="onScan" loading="{{scanning}}">扫描附近的 WiFi（2.4G）</button>
+    <view class="row" wx:for="{{aps}}" wx:key="ssid"
+          data-ssid="{{item.ssid}}" bindtap="onPick">
+      <text>{{item.ssid}}</text>
+      <text class="muted">{{item.rssi}} dBm</text>
+    </view>
+    <view class="muted" wx:if="{{!scanning && !aps.length}}">板子只支持 2.4G；扫不到就手填下面的 SSID</view>
+  </view>
+
+  <view class="card">
+    <view class="muted">SSID</view>
+    <input value="{{ssid}}" bindinput="onSsid" placeholder="点上面列表，或手填" />
+    <view class="muted">密码</view>
+    <input value="{{pass}}" bindinput="onPass" password placeholder="开放网络留空" />
+    <button class="btn" bindtap="onSave">保存并连接</button>
+    <view class="ok" wx:if="{{ok}}">{{ok}}</view>
+    <view class="tip" wx:if="{{tip}}">{{tip}}</view>
+  </view>
+</view>

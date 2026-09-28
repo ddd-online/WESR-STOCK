@@ -1,0 +1,15 @@
+{
+  "description": "WESR-STOCK 配网小程序（BLE）",
+  "projectname": "wesr-stock-provision",
+  "appid": "touristappid",
+  "compileType": "miniprogram",
+  "miniprogramRoot": "./",
+  "libVersion": "3.5.5",
+  "setting": {
+    "es6": true,
+    "postcss": true,
+    "minified": true,
+    "urlCheck": false,
+    "ignoreDevUnusedFiles": false
+  }
+}

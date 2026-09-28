@@ -1,0 +1,33 @@
+<view class="pad">
+  <view class="hint">板子需先长按 KEY 3 秒进入配网模式（屏幕底部状态条会反白）</view>
+
+  <view class="card" wx:if="{{!deviceId}}">
+    <button class="btn" bindtap="onScan" loading="{{scanning}}">扫描附近的板子</button>
+    <view class="tip" wx:if="{{tip}}">{{tip}}</view>
+    <view class="row" wx:for="{{devices}}" wx:key="deviceId"
+          data-id="{{item.deviceId}}" bindtap="onConnect">
+      <text>{{item.name}}</text>
+      <text class="muted">{{item.rssi}} dBm</text>
+    </view>
+  </view>
+
+  <view wx:else>
+    <view class="card">
+      <block wx:if="{{status}}">
+        <view class="row"><text>固件</text><text class="muted">{{status.fw}}</text></view>
+        <view class="row"><text>电量</text>
+          <text class="muted">{{status.batt_pct}}% · {{status.batt_mv}} mV</text></view>
+        <view class="row"><text>WiFi</text>
+          <text class="muted">{{status.wifi}} · {{status.ssid}}</text></view>
+        <view class="row"><text>IP</text><text class="muted">{{status.ip}}</text></view>
+        <view class="row"><text>信号</text><text class="muted">{{status.rssi}} dBm</text></view>
+        <view class="row"><text>股票池</text><text class="muted">{{status.cfg_count}} 只</text></view>
+      </block>
+      <view class="muted" wx:else>已连接，等待板子推送状态…</view>
+    </view>
+    <button class="btn" bindtap="onRefresh">刷新状态</button>
+    <button class="btn plain" bindtap="onExitPairing">让板子退出配网模式</button>
+    <button class="btn plain" bindtap="onDisconnect">断开</button>
+    <view class="tip" wx:if="{{tip}}">{{tip}}</view>
+  </view>
+</view>

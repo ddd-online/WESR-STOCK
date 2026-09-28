@@ -1,0 +1,40 @@
+<view class="pad">
+  <view class="hint">
+    第 1 页右栏用「首字」显示（默认取股票名第一个字，重名时自己填一个）；
+    第 2 页显示前 4 只、双击看后 4 只；第 3 页双击按顺序换股。
+  </view>
+
+  <view class="card">
+    <view class="row" wx:for="{{items}}" wx:key="index">
+      <view style="flex:1">
+        <input value="{{item.code}}" data-i="{{index}}" data-k="code"
+               bindinput="onField" placeholder="sh600519" />
+        <view style="display:flex">
+          <input style="flex:2" value="{{item.name}}" data-i="{{index}}" data-k="name"
+                 bindinput="onField" placeholder="贵州茅台" />
+          <input style="flex:1;margin-left:8rpx" value="{{item.mark}}" data-i="{{index}}"
+                 data-k="mark" bindinput="onField" placeholder="首字自动" maxlength="2" />
+        </view>
+      </view>
+      <view style="width:150rpx;text-align:right;font-size:24rpx">
+        <text bindtap="onMove" data-i="{{index}}" data-d="-1" class="muted">▲ </text>
+        <text bindtap="onMove" data-i="{{index}}" data-d="1" class="muted">▼ </text>
+        <text bindtap="onDel" data-i="{{index}}" class="muted">删除</text>
+      </view>
+    </view>
+    <button class="btn plain" bindtap="onAdd">+ 加一只（最多 8 只）</button>
+  </view>
+
+  <view class="card">
+    <view class="row">
+      <text>刷新间隔</text>
+      <picker range="{{intervals}}" value="{{idx}}" bindchange="onInterval">
+        <text class="muted">{{interval}} 秒 ›</text>
+      </picker>
+    </view>
+    <button class="btn" bindtap="onSave">下发到板子</button>
+    <button class="btn plain" bindtap="onReload">从板子读回</button>
+    <view class="ok" wx:if="{{ok}}">{{ok}}</view>
+    <view class="tip" wx:if="{{tip}}">{{tip}}</view>
+  </view>
+</view>

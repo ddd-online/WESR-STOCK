@@ -1,0 +1,24 @@
+{
+  "pages": [
+    "pages/device/device",
+    "pages/wifi/wifi",
+    "pages/stocks/stocks"
+  ],
+  "window": {
+    "navigationBarTitleText": "WESR-STOCK",
+    "navigationBarBackgroundColor": "#000000",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f2f2f2"
+  },
+  "tabBar": {
+    "color": "#888888",
+    "selectedColor": "#000000",
+    "backgroundColor": "#ffffff",
+    "list": [
+      { "pagePath": "pages/device/device", "text": "设备" },
+      { "pagePath": "pages/wifi/wifi", "text": "配网" },
+      { "pagePath": "pages/stocks/stocks", "text": "股票" }
+    ]
+  },
+  "sitemapLocation": "sitemap.json"
+}
