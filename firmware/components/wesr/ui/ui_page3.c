@@ -19,6 +19,22 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, int x, int y)
     return l;
 }
 
+/* 图例里的线段样例：实线整段，虚线 4px 一段（间距 2px） */
+static void line_sample(lv_obj_t *parent, int x, int y, int w, bool dashed)
+{
+    const int seg = dashed ? 4 : w;
+    for (int i = 0; i < w; i += (dashed ? 6 : w)) {
+        int wid = (w - i) < seg ? (w - i) : seg;
+        lv_obj_t *o = lv_obj_create(parent);
+        lv_obj_set_size(o, wid, 1);
+        lv_obj_set_pos(o, x + i, y);
+        lv_obj_set_style_bg_color(o, lv_color_black(), 0);
+        lv_obj_set_style_border_width(o, 0, 0);
+        lv_obj_set_style_radius(o, 0, 0);
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    }
+}
+
 lv_obj_t *Ui_Page3Create(void)
 {
     lv_obj_t *page = lv_obj_create(lv_scr_act());
@@ -37,9 +53,17 @@ lv_obj_t *Ui_Page3Create(void)
     s_price = label(page, &font_num25, 8, 16);
     s_prev  = label(page, &font_cn12, 118, 28);   /* "昨收 xxx" 含汉字，必须用中文字体 */
 
-    /* 图例：实线=价格、虚线=均价、横虚线=昨收 */
-    lv_obj_t *lg1 = label(page, &font_cn16, 240, 28);
-    lv_label_set_text(lg1, "价 均 昨收");
+    /* 图例：实线=价格、虚线=均价、横虚线=昨收。
+       光写「价 均 昨收」三个字没人看得懂（用户反馈），得带线段样例 —— 照设计稿 p3sub。 */
+    int lgx = 236, lgy = 28;
+    line_sample(page, lgx, lgy + 6, 14, false);
+    lv_label_set_text(label(page, &font_cn12, lgx + 17, lgy), "价");
+    lgx += 34;                                 /* 样例 17 + 字 12 + 5px 间隙，别挤在一起 */
+    line_sample(page, lgx, lgy + 6, 14, true);
+    lv_label_set_text(label(page, &font_cn12, lgx + 17, lgy), "均");
+    lgx += 34;
+    line_sample(page, lgx, lgy + 6, 14, true);
+    lv_label_set_text(label(page, &font_cn12, lgx + 17, lgy), "昨收");
 
     s_canvas = Ui_TrendCreate(page, UI_BIG_W, 156, true, true, true);
     lv_obj_set_pos(s_canvas, 10, 44);
