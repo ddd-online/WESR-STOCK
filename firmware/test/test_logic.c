@@ -325,8 +325,8 @@ static void test_chart_render(void)
                             .hatch = false, .grid = false, .span_ratio = 1.1f };
     wesr_chart_render(&b, &m, 10.00f, &o);
 
-    /* 量柱：sqrt 映射。线性的话 10/30 只有 6px（整排看着像一条线），sqrt 给 11px；
-       实测数据中位数只有满量的 7%，线性必然压成一条线。 */
+    /* 量柱：线性等比 —— 当天最大那分钟占满 vol_h，其余按 vol/vmax 缩。
+       锁死这条，免得以后有人「为了好看」改成非线性。 */
     {
         int col[3] = { o.pad_x, wesr_index_to_x(wesr_minute_index(1000), o.pad_x, 380 - o.pad_x),
                        380 - o.pad_x };
@@ -336,9 +336,9 @@ static void test_chart_render(void)
                 if (wesr_bmp_get(&b, col[k], y)) bars[k]++;
             }
         }
-        assert(bars[0] >= 10 && bars[0] <= 12);   /* sqrt(10/30)*20 = 11.5 */
-        assert(bars[1] == o.vol_h);               /* 满量 = 满高 */
-        assert(bars[2] >= 15 && bars[2] <= 17);   /* sqrt(20/30)*20 = 16.3 */
+        assert(bars[0] == 6);                     /* 10/30 * 20 */
+        assert(bars[1] == o.vol_h);               /* 满量 = 满高（基准） */
+        assert(bars[2] == 13);                    /* 20/30 * 20 */
     }
 
     /* 昨收基准线（10.00）在价格区里像素最多的那一行，且必须是虚线（有断开） */

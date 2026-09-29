@@ -180,10 +180,11 @@ void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
         }
         if (vmax > 0) {
             for (uint16_t i = 0; i < m->n; i++) {
-                /* 用 sqrt 而不是线性：一整天里量分布极偏（实测 max=1210 手、中位数 88 手，
-                   中位数只有满量的 7%），线性映射下绝大多数柱子被压到 1px，整排看着像一条线。
-                   ponytail: 代价是柱子不再等比例 —— 只表达"放没放量"。要精确比例就换回线性。 */
-                int h = (int)((float)o->vol_h * sqrtf(m->pts[i].vol / vmax));
+                /* 线性：当天最大的那分钟占满 vol_h，其余按比例缩 —— 量柱的意义就是
+                   "相对放量/缩量"，等比才对。注意本盘中位数只有满量的 7%（实测 88/1210 手），
+                   所以除了开盘那几根冲击柱，大部分柱子本来就只有 1~3px 高，这是数据的样子，
+                   不是画小了。要"看起来都有高度"得改非线性，那就不等比了。 */
+                int h = (int)((float)o->vol_h * (m->pts[i].vol / vmax));
                 if (h < 1 && m->pts[i].vol > 0) h = 1;
                 if (h > 0) {
                     wesr_bmp_vbar(b, xs[i], 1, o->vol_top + o->vol_h - h,
