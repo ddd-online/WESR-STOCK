@@ -211,6 +211,14 @@ static bool fetch_quotes(void)
         line = nl ? nl + 1 : NULL;
     }
     AppState_Unlock();
+    /* 快照自带成交时间（字段 30 = yyyymmddHHMMSS）。把它记成"手上这份数据是哪天的"，
+       状态条那行「休市 · 显示 MM-DD 收盘数据」就准了 —— 以前只有分时接口才写 data_day，
+       第 1 页显示的日期可能是上一次拉分时留下的。 */
+    AppState_Lock();
+    if (q[0].valid && q[0].stamp) {
+        AppState_Status()->data_day = (uint32_t)(q[0].stamp / 1000000ULL);
+    }
+    AppState_Unlock();
     free(body);
     ESP_LOGI(TAG, "quotes: %d/%d ok", hits, s_cfg->count);
     return hits > 0;
@@ -376,11 +384,17 @@ void Quote_Run(wesr_app_cfg_t *cfg)
 
         AppState_Lock();
         uint8_t page = AppState_Status()->page ? AppState_Status()->page : 1;
-        bool srv_closed = AppState_Status()->closed;
         bool bt_now = AppState_Status()->bt_connected;
         /* 换组/换股也要立刻到期：否则休市时下一次网络请求要等一分钟的 idle 重检 */
         uint8_t group = AppState_Status()->group, idx = AppState_Status()->idx;
         uint32_t cfg_gen = AppState_Status()->cfg_gen;
+        uint32_t dday = AppState_Status()->data_day;
+        /* "休市"由本地时间 + "手上这份数据是哪天的"推出来，**不再看服务端那个 market 标记**：
+           那个标记只有分时接口能给，第 1 页只发快照，一旦置上就再也下不来
+           （用户实测：9:15 开盘后一上午显示休市、13:00 也没恢复）。 */
+        uint32_t today = (uint32_t)(t.year * 10000 + t.month * 100 + t.day);
+        bool closed_now = !trading || (dday != 0 && dday != today);
+        AppState_Status()->closed = closed_now;
         AppState_Unlock();
         /* 蓝牙连接状态由 NimBLE 回调写，但回调里不能碰 LVGL（主机任务栈只有 4KB），
            所以顶栏图标在这里跟着刷。 */
@@ -391,7 +405,6 @@ void Quote_Run(wesr_app_cfg_t *cfg)
         if (page != last_page || group != last_group || idx != last_idx ||
             cfg_gen != last_cfg_gen) {
             wesr_sched_page(&sched, page);
-            sched.interval_s = s_cfg->refresh_sec ? s_cfg->refresh_sec : 15;
             last_page = page; last_group = group; last_idx = idx; last_cfg_gen = cfg_gen;
         }
         /* 跨进一个新的交易时段（早上开盘、下午开盘）：缓存里还挂着上一交易日的收盘数据，
@@ -421,8 +434,14 @@ void Quote_Run(wesr_app_cfg_t *cfg)
         }
 
         /* 交易时段正常轮询；休市时"按页补一次"——这样切到没数据的那页也能看到上一交易日数据 */
+        /* 轮询间隔：交易时段内如果手上还是上一交易日的数据（集合竞价那几分钟就是这样），
+           60 秒复核一次；正常交易时段按配置的 refresh_sec。 */
+        sched.interval_s = (trading && closed_now)
+                         ? 60
+                         : (s_cfg->refresh_sec ? s_cfg->refresh_sec : 15);
+
         bool need = false;
-        if (srv_closed) {
+        if (closed_now) {
             AppState_Lock();
             wesr_status_t *st = AppState_Status();
             if (page == 1) need = !st->quotes[0].valid;
@@ -433,7 +452,9 @@ void Quote_Run(wesr_app_cfg_t *cfg)
                 need = !st->minutes[0].valid || st->minutes_key != wesr_nav_minute_key(&s_nav);
             AppState_Unlock();
         }
-        bool may_fetch = (trading && !srv_closed) || (srv_closed && need);
+        /* 交易时段一律允许拉（服务端的休市标记不能当闸门，它是单向的）；
+           时段外只按"当前页缓存是空的/归属不对"补一次。 */
+        bool may_fetch = trading || (closed_now && need);
         wesr_fetch_t what = wesr_sched_tick(&sched, now_ms, may_fetch);
         if (what != WESR_FETCH_NONE) {
             bool ok = (what == WESR_FETCH_QUOTES) ? fetch_quotes() : fetch_page_minutes();
