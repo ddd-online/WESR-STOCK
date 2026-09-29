@@ -65,20 +65,23 @@ lv_obj_t *Ui_Page3Create(void)
     line_sample(page, lgx, lgy + 6, 14, true);
     lv_label_set_text(label(page, &font_cn12, lgx + 17, lgy), "昨收");
 
-    s_canvas = Ui_TrendCreate(page, UI_BIG_W, 156, true, true, true);
+    s_canvas = Ui_TrendCreate(page, UI_BIG_W, UI_BIG_H, true, true, true);
     lv_obj_set_pos(s_canvas, 10, 44);
 
+    /* 时间刻度与开高低量都跟着画布高度走，别写死 y —— 画布一改高度就得跟着改两处 */
+    const int tick_y = 44 + UI_BIG_H + 2;
+    const int ohlc_y = tick_y + 16;
     static const char *ticks[5] = { "09:30", "10:30", "11:30", "14:00", "15:00" };
     static const int    idxs[5] = { 0, 60, 120, 181, 241 };
     for (int i = 0; i < 5; i++) {
-        s_tick[i] = label(page, &font_num9, 10 + wesr_index_to_x(idxs[i], 0, UI_BIG_W), 202);
+        s_tick[i] = label(page, &font_num9, 10 + wesr_index_to_x(idxs[i], 0, UI_BIG_W), tick_y);
         lv_label_set_text(s_tick[i], ticks[i]);
     }
     /* 边界两个标签往内收，避免被切掉 */
-    lv_obj_set_pos(s_tick[0], 10, 202);
-    lv_obj_set_pos(s_tick[4], 10 + UI_BIG_W - 40, 202);
+    lv_obj_set_pos(s_tick[0], 10, tick_y);
+    lv_obj_set_pos(s_tick[4], 10 + UI_BIG_W - 40, tick_y);
 
-    s_ohlc = label(page, &font_cn12, 8, 220);     /* "开高低量" 同上 */
+    s_ohlc = label(page, &font_cn12, 8, ohlc_y);     /* "开高低量" 同上 */
     /* 同上：LVGL label 默认是 "Text" */
     lv_label_set_text(s_name, "");
     lv_label_set_text(s_idx, "");

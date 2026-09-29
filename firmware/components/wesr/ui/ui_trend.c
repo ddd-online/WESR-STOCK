@@ -42,9 +42,11 @@ void Ui_TrendRender(lv_obj_t *canvas, const wesr_minute_t *m, float prev_close)
         o.pad_top = 6;
         o.pad_bottom = 4;
         o.pad_x = 2;
-        o.price_h = t->volume ? (t->h - 20) : t->h;
-        o.vol_top = t->h - 16;
-        o.vol_h = t->volume ? 14 : 0;
+        /* 量柱区：设计稿是 20px（168 高的画布），这里画布更高，给到 24 才不塌 */
+        int volh = t->volume ? 24 : 0;
+        o.price_h = t->volume ? (t->h - volh - 10) : t->h;   /* 10 = 价格区与量柱之间的间隙 */
+        o.vol_top = t->h - volh - 4;
+        o.vol_h   = volh;
         o.hatch = t->hatch;
         o.grid = t->grid;
         o.span_ratio = 1.1f;

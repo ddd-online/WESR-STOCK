@@ -180,7 +180,10 @@ void wesr_chart_render(wesr_bmp_t *b, const wesr_minute_t *m, float prev_close,
         }
         if (vmax > 0) {
             for (uint16_t i = 0; i < m->n; i++) {
-                int h = (int)((float)o->vol_h * (m->pts[i].vol / vmax));
+                /* 用 sqrt 而不是线性：一整天里量分布极偏（实测 max=1210 手、中位数 88 手，
+                   中位数只有满量的 7%），线性映射下绝大多数柱子被压到 1px，整排看着像一条线。
+                   ponytail: 代价是柱子不再等比例 —— 只表达"放没放量"。要精确比例就换回线性。 */
+                int h = (int)((float)o->vol_h * sqrtf(m->pts[i].vol / vmax));
                 if (h < 1 && m->pts[i].vol > 0) h = 1;
                 if (h > 0) {
                     wesr_bmp_vbar(b, xs[i], 1, o->vol_top + o->vol_h - h,

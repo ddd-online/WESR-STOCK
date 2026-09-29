@@ -12,7 +12,7 @@
 #define UI_TREND_W     184
 #define UI_TREND_H     86
 #define UI_BIG_W       380
-#define UI_BIG_H       168
+#define UI_BIG_H       184            /* 第 3 页分时大图高度：第 1 版 156，下面空着 30px 没用 */
 
 /* 位图字体（由 tools/gen_fonts.ps1 生成到本目录，构建产物不入 git） */
 #include "lvgl.h"
