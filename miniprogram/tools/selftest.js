@@ -83,8 +83,13 @@ let bindCount = 0
 appJson.pages.forEach((p) => {
   const jsPath = path.join(root, p + '.js')
   const wxmlPath = path.join(root, p + '.wxml')
+  const jsonPath = path.join(root, p + '.json')
   assert.ok(fs.existsSync(jsPath), p + '.js 不存在')
   assert.ok(fs.existsSync(wxmlPath), p + '.wxml 不存在')
+  /* 缺 .json 时开发者工具只报「缺少 json 文件，无法注册为页面」，整个页面是白屏，
+     所以这里当成硬错误挡住（wxss 可省，缺了会走 app.wxss 的全局样式） */
+  assert.ok(fs.existsSync(jsonPath), p + '.json 不存在（页面无法注册）')
+  JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
   current = p
   require(jsPath)
   const page = pages[p]
