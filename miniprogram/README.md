@@ -62,3 +62,8 @@ node miniprogram/tools/selftest.js
 不联网）。
 
 板子侧的同一套协议由 `firmware/tools/ble_probe.py`（PC 当假手机）端到端验收。
+
+## 发布
+
+名称/简称/介绍/头像的**定稿**、发布前的四道门槛（备案、服务器域名、隐私声明蓝牙、类目）、
+审核备注模板都在 [PUBLISH.md](PUBLISH.md)。
