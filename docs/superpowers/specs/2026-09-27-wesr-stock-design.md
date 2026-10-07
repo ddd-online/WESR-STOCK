@@ -95,6 +95,7 @@ GET https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=sh600519
 - **不支持逗号批量**：多代码返回 `{"code":-1,"msg":"code param error"}`，所以 4 只 = 4 次请求（复用同一条 TLS 连接）。
 - 结构：`data.<code>.data.data = ["HHMM 价格 累计量(手) 累计额(元)", ...]`，另有 `data.<code>.data.date = "YYYYMMDD"`。
 - **同一响应里自带快照**：`data.<code>.qt.<code>` 是 JSON 字符串数组，下标与 §4.1 相同（3=现价、4=昨收、5=今开、32=涨跌幅…），中文名是 `\uXXXX` 转义 —— **这个接口完全没有 GBK 问题**。所以第 2、3 页只发 1 次请求，就能同时拿到分时、现价、昨收（画昨收基准线要用的值就在这）。
+  下标 1 就是股票名，小程序拿它做「输入代码自动补名称」（§11）。注意服务端**用空格把短名字补到固定显示宽度**：`五粮液` → `"五 粮 液"`、`万科Ａ` → `"万  科Ａ"`，还有全角 `Ａ`；用的时候要把空格去掉、全角折半角。真值见 `miniprogram/test/fixtures/`。
 - **同一响应里自带市场状态**：`data.<code>.qt.market[0]` = `"2026-09-27 01:14:22|HK_close_已休市|SH_close_中秋节休市|SZ_close_中秋节休市|US_close_已休市|..."`，取 `|SH_` 后面紧跟的是 `close` 还是 `open` 即可。
 - 实测 `sh600519`：**267 个点**（首点 `0930 1250.01 183 22875182.71`，末点 `1530 1237.00 31245 3868009791.36`）——**不要假设 240 点**，按实际点数绘制。
 - 均价 = `累计额 ÷ (累计量 × 100)`（累计量单位是手）。自校验：首点算得 1250.01，与价格一致。
@@ -258,10 +259,14 @@ WiFi 密码只在小程序→板子的方向传输并落 NVS；**不支持回读
 1. 设备：扫描 → 连接 → 显示设备状态（固件、电量、WiFi、IP、RSSI）；页面顶部提示「板子需先长按 KEY 3 秒进入配网模式」。
 2. 配网：显示板子扫到的 2.4G 网络列表 → 选 SSID + 输密码 → 保存并连接 → 显示结果与板端 IP。
 3. 股票设置：8 只列表（增删、排序、显示全名与首字）、刷新间隔、同步到设备、从设备读回。
+   代码框敲满 6 位数字就自动补 `sh/sz/bj` 前缀（按首位分市场）并联网取回股票名填进名字框；
+   取不到就留空让用户手填，绝不挡下发。
 
 技术要点：
 
-- 只用 BLE 相关 API（`openBluetoothAdapter` / `startBluetoothDevicesDiscovery` 带 service UUID 过滤 / `createBLEConnection` / `notifyBLECharacteristicValueChange` / `writeBLECharacteristicValue`）；**不用 `wx.request`** —— 局域网 IP 在生产环境过不了域名白名单。
+- 和板子通信**只用 BLE 相关 API**（`openBluetoothAdapter` / `startBluetoothDevicesDiscovery` 带 service UUID 过滤 / `createBLEConnection` / `notifyBLECharacteristicValueChange` / `writeBLECharacteristicValue`）——不用 `wx.request` 去够板子的局域网 IP（生产环境过不了域名白名单）。
+- **唯一的 `wx.request` 是取股票名称**（§4 的分时接口：`data.<code>.qt.<code>[1]`，中文是 `\uXXXX` 转义，没有 GBK 问题）。为什么不让板子查：配网模式下 NimBLE 占掉内部 RAM，板子那边 TLS 起不来（`firmware/README.md` §9，「配网模式下不拉行情」），所以名称只能在手机侧取。代价是 `web.ifzq.gtimg.cn`（以及回退主机 `proxy.finance.qq.com`）要进小程序后台的 request 合法域名；开发者工具/真机调试里勾了「不校验合法域名」可以直接用。
+- 取回的名字要**规整**：服务端把短名字用空格补到固定显示宽度（`"五 粮 液"`、`"万  科Ａ"`），空格要去掉；全角 `Ａ-Ｚ/０-９` 折成半角 —— 板子字库范围是 ASCII + CJK（`firmware/tools/gen_fonts.ps1`），全角字母没有字形。
 - 分包固定 20 字节，不依赖 MTU 协商。
 - 本地缓存用 `wx.setStorageSync` 存最近一次设备与股票列表，重进页面直接回填。
 - 错误提示：蓝牙未开 → 引导开启；连接失败 → 提示靠近重试；密码错 → 红字提示并留在配网屏；股票超过 8 只 → 直接拦住。

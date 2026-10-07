@@ -79,6 +79,17 @@ global.App = () => {}
 /* 任何 wx.xxx() 都当空函数：页面模块顶层不会调 wx，只在事件里调 */
 global.wx = new Proxy({}, { get: () => () => {} })
 
+/* 下面几节都要换掉 global.wx（假 BLE / 假 request），而"换 wx"是全局副作用。
+   串成一条链顺序跑：否则 A 节 await 期间 B 节把 wx 顶掉，A 的 Promise 永远不落地
+   （踩过一次：请求 stub 被扫描那节的 fakeWx 换走，进程直接静默退出、一行输出都没有）。 */
+let sections = Promise.resolve()
+function section(fn) {
+  sections = sections.then(fn).catch((e) => {
+    console.error(e)
+    process.exit(1)
+  })
+}
+
 let bindCount = 0
 appJson.pages.forEach((p) => {
   const jsPath = path.join(root, p + '.js')
@@ -144,6 +155,130 @@ if (fs.existsSync(bleTaskPath)) {
 } else {
   console.log('  跳过刷新间隔对齐（没看到固件源码）')
 }
+
+/* ---------------- 代码 → 名称（联网查） ----------------
+   名称走腾讯分时接口（板子第 2/3 页用的同一个），qt 数组第 1 项就是名字。
+   这里不联网：wx.request 换成假的，夹具用固件那份真实响应，
+   这样"接口形状变了"这件事会被测出来，而不是等到用户敲代码才发现。 */
+const stocksPage = pages['pages/stocks/stocks']
+
+/* 1) 6 位数字 → 带前缀：按首位分市场（沪 6/9、深 0/2/3、北 4/8） */
+const normCases = [
+  ['600519', 'sh600519'], ['688981', 'sh688981'],      // 沪主板 / 科创板
+  ['900901', 'sh900901'],                              // 沪 B
+  ['000858', 'sz000858'], ['300750', 'sz300750'],      // 深主板 / 创业板
+  ['200011', 'sz200011'], ['003816', 'sz003816'],      // 深 B / 00 开头新股
+  ['430047', 'bj430047'], ['830799', 'bj830799'],      // 北交所
+  [' 600519 ', 'sh600519'], ['sh600519', 'sh600519'],  // 空格 / 已经带前缀
+  ['SH600519', 'sh600519'],                            // 大写也认
+  ['60051', ''], ['6005190', ''], ['abc', ''], ['', ''], [null, ''],
+  ['12345', ''],                                       // 1 开头没有对应市场
+]
+normCases.forEach(([input, want]) => {
+  assert.strictEqual(stocksPage.normCode(input), want,
+    'normCode(' + JSON.stringify(input) + ')')
+})
+
+/* 2) 从真实分时响应里取名字 + 回填语义（空名字才填、手填过的不动、自动填过的可覆盖） */
+const minuteFixture = path.join(root, '..', 'firmware', 'test', 'fixtures',
+                                'minute_sh600519.json')
+assert.ok(fs.existsSync(minuteFixture), '缺少分时夹具 minute_sh600519.json')
+const fixture = JSON.parse(fs.readFileSync(minuteFixture, 'utf8'))
+
+/* 服务端把短名字用空格补宽、还会出现全角字母 —— 用真实抓下来的夹具测（见 test/fixtures/README.md） */
+const fxDir = path.join(root, 'test', 'fixtures')
+const fx = (c) => JSON.parse(fs.readFileSync(path.join(fxDir, 'name_' + c + '.json'), 'utf8'))
+const fx858 = fx('sz000858')      // "五 粮 液"  → 五粮液
+const fx002 = fx('sz000002')      // "万  科Ａ"  → 万科A（全角折半角）
+const fx430 = fx('bj430047')      // "诺思兰德"  原样
+
+/* 3) cleanName 直接测：补宽空格、全角折半角、首尾空白 */
+const cleanCases = [
+  ['五 粮 液', '五粮液'],
+  ['万  科Ａ', '万科A'],
+  ['诺思兰德', '诺思兰德'],
+  [' 贵州茅台 ', '贵州茅台'],
+  ['京东方Ａ', '京东方A'],
+  ['ＴＣＬ科技', 'TCL科技'],
+  ['', ''],
+  [null, ''],
+  [undefined, ''],
+]
+cleanCases.forEach(([input, want]) => {
+  assert.strictEqual(stocksPage.cleanName(input), want,
+    'cleanName(' + JSON.stringify(input) + ')')
+})
+
+function fakePage(items) {
+  /* 方法挂在原型上（= 真机上 this 的样子），这样 lookupName → applyName/needsName
+     这条链跟运行时是同一份代码，不是在这儿重写一遍 */
+  const ctx = Object.create(stocksPage)
+  ctx.data = { items }
+  ctx.patched = {}
+  ctx.setData = function (o) {
+    Object.assign(this.patched, o)
+    Object.keys(o).forEach((k) => {
+      const m = k.match(/^items\[(\d+)\]\.(\w+)$/)
+      if (m) this.data.items[Number(m[1])][m[2]] = o[k]
+    })
+  }
+  return ctx
+}
+
+section(async () => {
+  /* wx 只实现 request，别的（showLoading 之类）由 Proxy 兜底成空函数 */
+  const setRequest = (fn) => {
+    global.wx = new Proxy({ request: fn }, { get: (t, k) => (k in t ? t[k] : () => {}) })
+  }
+  /* 按 URL 里的 code 回对应夹具；没有的代码回"接口里没这个" */
+  const byCode = (o) => {
+    const m = o.url.match(/code=([a-z]{2}\d{6})/)
+    const body = m && { sh600519: fixture, sz000858: fx858, sz000002: fx002,
+                        bj430047: fx430 }[m[1]]
+    if (body) o.success({ statusCode: 200, data: body })
+    else o.success({ statusCode: 200, data: { code: 0, data: {} } })
+  }
+  setRequest(byCode)
+  const p = fakePage([
+    { code: 'sh600519', name: '', mark: '' },                      // 空名字 → 该填
+    { code: 'sh600519', name: '手填的', mark: '' },                 // 手填过（没有 auto）→ 不动
+    { code: 'sh600519', name: '旧的自动名', mark: '', auto: true },  // 自动填过 → 可以覆盖
+    { code: 'sz000858', name: '', mark: '' },                      // 另一个代码 → 不动
+  ])
+  await stocksPage.lookupName.call(p, 'sh600519')
+  assert.strictEqual(p.data.items[0].name, '贵州茅台', '空名字应该被填上')
+  assert.strictEqual(p.data.items[0].auto, true)
+  assert.strictEqual(p.data.items[1].name, '手填的', '手填的名字不能被覆盖')
+  assert.strictEqual(p.data.items[2].name, '贵州茅台', '上次自动填的应该被刷新')
+  assert.strictEqual(p.data.items[3].name, '', '别的代码不该被动')
+
+  /* 真实服务端会把短名字补宽、还会带全角字母：填进去的必须是干净的名字 */
+  const padded = [
+    ['sz000858', '五粮液'],      // 夹具里是 "五 粮 液"
+    ['sz000002', '万科A'],       // 夹具里是 "万  科Ａ"
+    ['bj430047', '诺思兰德'],     // 北交所代码也走同一个接口
+  ]
+  for (const [code, want] of padded) {
+    const c = fakePage([{ code, name: '', mark: '' }])
+    await stocksPage.lookupName.call(c, code)
+    assert.strictEqual(c.data.items[0].name, want, code + ' 的名称应该被规整')
+  }
+
+  /* 查不到：名字留空、只给一句提示，绝不抛出去挡住下发 */
+  const q = fakePage([{ code: 'sh601988', name: '', mark: '' }])
+  await stocksPage.lookupName.call(q, 'sh601988')
+  assert.strictEqual(q.data.items[0].name, '')
+  assert.ok(/没取到/.test(q.patched.tip), q.patched.tip)
+
+  /* 域名白名单是最常见的坑，提示要说人话 */
+  setRequest((o) => o.fail({ errMsg: 'request:fail url not in domain list' }))
+  const r = fakePage([{ code: 'sh600519', name: '', mark: '' }])
+  await stocksPage.lookupName.call(r, 'sh600519')
+  assert.ok(/白名单/.test(r.patched.tip), r.patched.tip)
+
+  console.log('  代码补前缀 + 联网取名称通过（' + normCases.length + ' 条映射 / 名字规整 ' +
+              cleanCases.length + ' 条 / 回填语义 / 查不到与白名单提示）')
+})
 
 /* ---------------- 下发报文检查 ----------------
    股票页真正发给板子的 JSON 形状 —— 板子那边是按 spec §10 手写解析的，
@@ -220,7 +355,7 @@ function fakeWx(opts) {
   return global.wx
 }
 
-;(async () => {
+section(async () => {
   const fail = (e) => e
 
   /* 模拟器：直接拒，一个蓝牙 API 都不碰 */
@@ -257,7 +392,4 @@ function fakeWx(opts) {
   assert.deepStrictEqual(w._calls, ['on', 'open', 'start', 'off', 'stop'])
 
   console.log('  扫描报错文案通过（模拟器 / 排序与识别 / 10001 / 10008 / 出口清理）')
-})().catch((e) => {
-  console.error(e)
-  process.exit(1)
 })

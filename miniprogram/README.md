@@ -6,8 +6,26 @@
 三屏：**设备**（扫描 → 连接 → 看固件/电量/IP/信号）、**配网**（让板子扫 2.4G →
 选 SSID + 输密码 → 保存并连接）、**股票**（8 只的增删排序 + 刷新间隔，下发或读回）。
 
+股票页的代码框**敲满 6 位数字就自动补 `sh/sz/bj` 前缀并联网取回股票名**（6/9 沪、
+0/2/3 深、4/8 北交所），取不到就留空让你手填、不挡下发。
+
 用法：先把开发板**长按 KEY 3 秒**进配网模式（屏幕底部状态条反白），再来扫。
 3 分钟没操作板子会自动退出配网。
+
+## 股票名称从哪儿来（联网）
+
+名称走腾讯的分时接口 `https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=<code>`
+—— 就是板子画分时图用的那个（`data.<code>.qt.<code>[1]`，中文是 `\uXXXX` 转义，没有
+GBK 问题）。**不走板子**：配网模式下 NimBLE 占掉内部 RAM，板子那边 TLS 起不来
+（`firmware/README.md` §9），所以名称只能在手机侧取，这也意味着**手机要能上网**。
+
+- 开发者工具和**真机调试**里，勾上「详情 → 本地设置 → 不校验合法域名」就能直接用。
+- 体验版/正式版必须在小程序后台把这两个域名加进 **request 合法域名**：
+  `web.ifzq.gtimg.cn` 和回退用的 `proxy.finance.qq.com`。没加的话页面会提示
+  「域名不在白名单里」，名字留空、手填即可。
+- 服务端会把短名字用空格补到固定宽度（`五粮液` → `"五 粮 液"`），还会出现全角 `Ａ`；
+  小程序会把空格去掉、全角折半角 —— 板子的字库没有全角字母字形。真值夹具在
+  `test/fixtures/`。
 
 ## 扫不到板子
 
@@ -28,7 +46,8 @@
 
 BLE 走 Nordic UART Service，报文是 UTF-8 JSON + `\n`，双向固定 20 字节分片 ——
 见 [设计文档 §10](../docs/superpowers/specs/2026-09-27-wesr-stock-design.md)。
-`utils/ble.js` 是唯一的通信层（不依赖任何 npm 包）。
+`utils/ble.js` 是**和板子**通信的唯一一层（不依赖任何 npm 包）；取股票名是唯一一处
+不经板子的 `wx.request`（原因见上）。
 
 ## 自检
 
@@ -37,5 +56,9 @@ BLE 走 Nordic UART Service，报文是 UTF-8 JSON + `\n`，双向固定 20 字�
 ```bash
 node miniprogram/tools/selftest.js
 ```
+
+它顺便查：三页的 `.js/.wxml/.json` 在不在、wxml 绑定的事件在 js 里有没有、刷新间隔白名单
+和固件 `setInterval` 的校验是否一致、代码补前缀与名称规整（跑 `test/fixtures/` 里的真实响应，
+不联网）。
 
 板子侧的同一套协议由 `firmware/tools/ble_probe.py`（PC 当假手机）端到端验收。

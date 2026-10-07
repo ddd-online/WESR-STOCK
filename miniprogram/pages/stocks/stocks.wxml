@@ -1,5 +1,6 @@
 <view class="pad">
   <view class="hint">
+    代码敲满 6 位会自动补 sh/sz/bj 前缀并联网取名称（取不到就自己填，手机要能上网）；
     第 1 页右栏用「首字」显示（默认取股票名第一个字，重名时自己填一个）；
     第 2 页显示前 4 只、双击看后 4 只；第 3 页双击按顺序换股。
   </view>
@@ -8,7 +9,7 @@
     <view class="row" wx:for="{{items}}" wx:key="index">
       <view style="flex:1">
         <input value="{{item.code}}" data-i="{{index}}" data-k="code"
-               bindinput="onField" placeholder="sh600519" />
+               bindinput="onField" placeholder="600519 或 sh600519" />
         <view style="display:flex">
           <input style="flex:2" value="{{item.name}}" data-i="{{index}}" data-k="name"
                  bindinput="onField" placeholder="贵州茅台" />
