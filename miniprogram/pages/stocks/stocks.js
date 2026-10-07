@@ -1,10 +1,10 @@
 const ble = require('../../utils/ble')
 
-const INTERVALS = [5, 15, 30, 60]
+const INTERVALS = [5, 10, 15, 30, 60]
 const MAX = 8
 
 Page({
-  data: { items: [], interval: 15, idx: 1, intervals: INTERVALS, tip: '', ok: '', dup: '' },
+  data: { items: [], interval: 15, idx: INTERVALS.indexOf(15), intervals: INTERVALS, tip: '', ok: '', dup: '' },
 
   onShow() {
     if (ble.connected()) this.load()

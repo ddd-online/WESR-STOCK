@@ -240,7 +240,7 @@ struct AppCfg {              // NVS
 | `setWifi` | ssid, pass | 存 NVS 并连接，回 `ack` / `err` |
 | `getCfg` | — | 回 `cfg`（股票池 + 刷新间隔 + 首字） |
 | `setStocks` | items[≤8] {code, name, mark?} | 校验后存 NVS，回 `ack` / `err` |
-| `setInterval` | sec (5/15/30/60) | 回 `ack` |
+| `setInterval` | sec (5/10/15/30/60) | 回 `ack` |
 | `timeSync` | unix | 写 RTC，回 `ack` |
 | `exit` | — | 退出配网模式 |
 
@@ -287,7 +287,7 @@ WiFi 密码只在小程序→板子的方向传输并落 NVS；**不支持回读
 
 | 常量 | 值 |
 | --- | --- |
-| 刷新间隔 | 15s（可选 5/15/30/60） |
+| 刷新间隔 | 15s（可选 5/10/15/30/60） |
 | 交易时段 | 09:15–11:30、13:00–15:00 |
 | 失败退避 | 5/10/20/30s（封顶 30s），连续 5 次 → 未联网状态条 |
 | 按键判定 | 单击 <400ms；双击间隔 <400ms；长按 ≥3000ms |

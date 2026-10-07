@@ -356,8 +356,8 @@ static void Ble_OnLine(const char *line, char *out, uint16_t cap)
     if (wesr_ble_cmd_is(line, "setInterval")) {
         long sec = 0;
         if (!wesr_ble_get_int(line, "sec", &sec) ||
-            (sec != 5 && sec != 15 && sec != 30 && sec != 60)) {
-            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_ARG, "sec must be 5/15/30/60"));
+            (sec != 5 && sec != 10 && sec != 15 && sec != 30 && sec != 60)) {
+            reply(out, cap, wesr_ble_fmt_err(out, cap, WESR_BLE_E_ARG, "sec must be 5/10/15/30/60"));
             return;
         }
         wesr_app_cfg_t *c = Quote_Cfg();

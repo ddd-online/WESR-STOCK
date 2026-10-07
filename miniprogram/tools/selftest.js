@@ -113,6 +113,38 @@ appJson.pages.forEach((p) => {
 
 console.log('  页面接线通过（' + appJson.pages.length + ' 个页面 / ' + bindCount + ' 个事件绑定）')
 
+/* ---------------- 刷新间隔白名单对齐 ----------------
+   白名单在两处：小程序 picker 的 INTERVALS 和固件 setInterval 的校验。两边不一致的后果是
+   小程序给出板子会 E_ARG 的选项，或者板子存了 10 而 picker 高亮到 5。直接从固件源码里抠
+   出白名单来比 —— 以后加间隔（比如这次的 10s）两边都得改，改漏一个这里就红。 */
+const intervals = pages['pages/stocks/stocks'].data.intervals
+const bleTaskPath = path.join(root, '..', 'firmware', 'components', 'wesr', 'app',
+                               'ble_task.cpp')
+if (fs.existsSync(bleTaskPath)) {
+  const src = fs.readFileSync(bleTaskPath, 'utf8')
+  const cond = (src.match(/sec != \d+(?: && sec != \d+)+/) || [])[0]
+  assert.ok(cond, 'ble_task.cpp 里没找到 setInterval 的 sec 白名单')
+  const accepted = (cond.match(/\d+/g) || []).map(Number).sort((a, b) => a - b)
+  assert.deepStrictEqual(intervals.slice().sort((a, b) => a - b), accepted,
+    '小程序 picker 的间隔和固件 setInterval 白名单不一致')
+
+  /* picker 下标 → 秒：往中间插一项最容易错的就是这个映射（idx 会整体后移） */
+  const ivData = { idx: 0, interval: 0, ok: '' }
+  const ivIdx = intervals.indexOf(10)
+  assert.ok(ivIdx > 0, '10 秒没进白名单')
+  assert.strictEqual(pages['pages/stocks/stocks'].data.idx, intervals.indexOf(15),
+    '默认 15 秒的 picker 下标不对（插项后 idx 要跟着移）')
+  pages['pages/stocks/stocks'].onInterval.call({
+    data: ivData,
+    setData(o) { Object.assign(ivData, o) },
+  }, { detail: { value: String(ivIdx) } })
+  assert.strictEqual(ivData.interval, 10, 'picker 选 10 秒应该得到 interval=10')
+
+  console.log('  刷新间隔对齐（' + intervals.join('/') + '，与固件白名单一致）')
+} else {
+  console.log('  跳过刷新间隔对齐（没看到固件源码）')
+}
+
 /* ---------------- 下发报文检查 ----------------
    股票页真正发给板子的 JSON 形状 —— 板子那边是按 spec §10 手写解析的，
    多发一个字段、少发一个字段都会 E_ARG。这里把 send 换成假的，看它到底发什么。 */
