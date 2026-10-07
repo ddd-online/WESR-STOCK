@@ -121,11 +121,28 @@ function fail(msg) {
   return new Promise((_, reject) => reject(new Error(msg)))
 }
 
-/* 扫广播：按服务 UUID 过滤，返回 [{deviceId, name, rssi}] */
+/* 开发者工具模拟器没有蓝牙协议栈：openBluetoothAdapter 必失败，报回来的是
+   「适配器不可用」，看起来像板子的问题。这里单认出来，别让用户去查板子。 */
+function inDevtools() {
+  try {
+    return wx.getSystemInfoSync().platform === 'devtools'
+  } catch (e) {
+    return false                 // 拿不到就当真机，走正常流程
+  }
+}
+
+/* 扫广播：按服务 UUID 过滤，返回 [{deviceId, name, rssi}]。
+   板子在配网模式下广播 NUS 服务 UUID（固件 ble_task.cpp advertise()），
+   广播名是截短的 "WESR"，完整名 "WESR-STOCK" 在 scan rsp 里 —— 两种情况名字都以 WESR 开头。 */
 function scan(ms) {
   return new Promise((resolve, reject) => {
+    if (inDevtools()) {
+      return reject(new Error('开发者工具模拟器没有蓝牙：请点工具栏「真机调试」，' +
+                              '或用「预览」拿手机扫'))
+    }
     const found = {}
-    wx.onBluetoothDeviceFound((res) => {
+    let done = false
+    const onFound = (res) => {
       (res.devices || []).forEach((d) => {
         const name = d.name || d.localName || ''
         if (name.indexOf('WESR') === 0 || (d.advertisServiceUUIDs || [])
@@ -137,21 +154,37 @@ function scan(ms) {
           }
         }
       })
-    })
+    }
+    /* 每条出口都必须清监听 + 停扫描，否则第二次扫会叠一份回调，
+       而且板子那边会一直被连着扫（费电、也抢 WiFi 天线） */
+    const stop = (err) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      if (wx.offBluetoothDeviceFound) wx.offBluetoothDeviceFound(onFound)
+      wx.stopBluetoothDevicesDiscovery()
+      if (err) reject(err)
+      else resolve(Object.keys(found).map((k) => found[k])
+        .sort((a, b) => b.rssi - a.rssi))
+    }
+    const timer = setTimeout(() => stop(null), ms || 6000)
+
+    wx.onBluetoothDeviceFound(onFound)
     wx.openBluetoothAdapter({
       success: () => {
         wx.startBluetoothDevicesDiscovery({
           services: [SVC],
           allowDuplicatesKey: false,
-          fail: (e) => reject(new Error('扫描失败：' + (e.errMsg || ''))),
+          fail: (e) => stop(new Error('扫描失败（errCode ' + (e && e.errCode) + '）：' +
+                                      ((e && e.errMsg) || '未知'))),
         })
       },
-      fail: () => reject(new Error('蓝牙没开：请到系统设置里打开蓝牙')),
+      /* errCode 10001 = 适配器不可用，真机上就是蓝牙没开；别的错原样报出来，
+         免得又出现"手机蓝牙明明是开的，却被告知没开" */
+      fail: (e) => stop(new Error((e && e.errCode) === 10001
+        ? '蓝牙没开：请到系统设置里打开蓝牙'
+        : '打不开蓝牙适配器（errCode ' + (e && e.errCode) + '）：' + ((e && e.errMsg) || '未知'))),
     })
-    setTimeout(() => {
-      wx.stopBluetoothDevicesDiscovery()
-      resolve(Object.keys(found).map((k) => found[k]).sort((a, b) => b.rssi - a.rssi))
-    }, ms || 6000)
   })
 }
 

@@ -21,7 +21,7 @@ Page({
       this.setData({
         devices: list,
         scanning: false,
-        tip: list.length ? '' : '没扫到 WESR-STOCK：板子要先长按 KEY 3 秒进配网模式',
+        tip: list.length ? '' : '没扫到 WESR-STOCK：先长按 KEY 3 秒让板子进配网模式（屏幕底部状态条反白），再扫。板子 3 分钟没操作会自己退出配网',
       })
     }).catch((e) => this.setData({ scanning: false, tip: e.message }))
   },

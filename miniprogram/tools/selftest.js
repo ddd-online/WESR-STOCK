@@ -157,3 +157,75 @@ setTimeout(() => {
     console.log('  下发报文通过（setStocks 过滤 / setWifi 形状）')
   }, 0)
 }, 0)
+
+/* ---------------- 扫描报错文案检查 ----------------
+   scan() 的每条失败路径都要说人话：模拟器没蓝牙、真机蓝牙没开（10001）、其它 errCode
+   原样报出来。以前一律报「蓝牙没开」，在模拟器里就会让人跑去查板子（用户实测踩过）。 */
+function fakeWx(opts) {
+  const calls = []
+  const impl = {
+    getSystemInfoSync: () => ({ platform: opts.platform || 'android' }),
+    onBluetoothDeviceFound: (cb) => { calls.push('on'); impl._cb = cb },
+    offBluetoothDeviceFound: (cb) => {
+      calls.push('off')
+      assert.strictEqual(cb, impl._cb, 'off 的必须就是 on 的那个回调')
+    },
+    stopBluetoothDevicesDiscovery: () => calls.push('stop'),
+    openBluetoothAdapter: (o) => {
+      calls.push('open')
+      if (opts.openFail) o.fail(opts.openFail)
+      else o.success()
+    },
+    startBluetoothDevicesDiscovery: (o) => {
+      calls.push('start')
+      if (opts.startFail) return o.fail(opts.startFail)
+      ;(opts.devices || []).forEach((d) => impl._cb({ devices: [d] }))
+    },
+    _calls: calls,
+  }
+  /* 没实现的 wx.xxx 一律当空函数 —— 上面几节（showLoading 之类）还在用同一个 wx */
+  global.wx = new Proxy(impl, { get: (t, k) => (k in t ? t[k] : () => {}) })
+  return global.wx
+}
+
+;(async () => {
+  const fail = (e) => e
+
+  /* 模拟器：直接拒，一个蓝牙 API 都不碰 */
+  let w = fakeWx({ platform: 'devtools' })
+  let err = await bleMod.scan(20).then(() => null, fail)
+  assert.ok(/模拟器/.test(err.message), err.message)
+  assert.deepStrictEqual(w._calls, [], '模拟器下不该调用任何蓝牙 API')
+
+  /* 真机成功：按 rssi 排序，名字或服务 UUID 都能认出来，出口清监听 + 停扫描 */
+  w = fakeWx({ devices: [
+    { deviceId: 'a', name: 'WESR', RSSI: -70 },
+    { deviceId: 'b', localName: 'WESR-STOCK', RSSI: -50 },
+    { deviceId: 'c', name: 'MiBand', RSSI: -10 },              // 不是板子，丢掉
+    { deviceId: 'd', name: '', advertisServiceUUIDs: [
+      bleMod.SVC], RSSI: -60 },                                // 靠服务 UUID 认出来
+  ] })
+  const list = await bleMod.scan(30)
+  assert.deepStrictEqual(list.map((x) => x.deviceId), ['b', 'd', 'a'])
+  assert.deepStrictEqual(w._calls, ['on', 'open', 'start', 'off', 'stop'])
+
+  /* 10001 = 适配器不可用（真机蓝牙没开）；别的 errCode 原样报出来，不冒充"没开" */
+  w = fakeWx({ openFail: { errCode: 10001, errMsg: 'openBluetoothAdapter:fail' } })
+  err = await bleMod.scan(30).then(() => null, fail)
+  assert.ok(/^蓝牙没开/.test(err.message), err.message)
+  assert.deepStrictEqual(w._calls, ['on', 'open', 'off', 'stop'], '失败也要清干净')
+
+  w = fakeWx({ openFail: { errCode: 10008, errMsg: 'openBluetoothAdapter:fail system error' } })
+  err = await bleMod.scan(30).then(() => null, fail)
+  assert.ok(/10008/.test(err.message) && !/没开/.test(err.message), err.message)
+
+  w = fakeWx({ startFail: { errCode: 10008, errMsg: 'startBluetoothDevicesDiscovery:fail' } })
+  err = await bleMod.scan(30).then(() => null, fail)
+  assert.ok(/扫描失败（errCode 10008）/.test(err.message), err.message)
+  assert.deepStrictEqual(w._calls, ['on', 'open', 'start', 'off', 'stop'])
+
+  console.log('  扫描报错文案通过（模拟器 / 排序与识别 / 10001 / 10008 / 出口清理）')
+})().catch((e) => {
+  console.error(e)
+  process.exit(1)
+})
