@@ -11,3 +11,8 @@ typedef void (*DispFlushCb)(struct _lv_disp_drv_t * disp_drv, const lv_area_t * 
 void Lvgl_PortInit(int width, int height,DispFlushCb flush_cb);
 bool Lvgl_lock(int timeout_ms);
 void Lvgl_unlock(void);
+
+/* 性能基线打点：lv_timer_handler() 单轮耗时的均值/峰值（us），由主循环取走后 reset */
+uint32_t Lvgl_stats_mean_us(void);
+uint32_t Lvgl_stats_max_us(void);
+void     Lvgl_stats_reset(void);

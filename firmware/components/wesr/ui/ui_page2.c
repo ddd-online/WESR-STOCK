@@ -4,6 +4,7 @@
 #include "ui_theme.h"
 #include "ui_page2.h"
 #include "ui_trend.h"
+#include "ui_util.h"
 #include <string.h>
 
 typedef struct {
@@ -69,18 +70,18 @@ void Ui_Page2Update(const wesr_minute_t *m, const wesr_quote_t *q,
     for (int i = 0; i < 4; i++) {
         uint8_t idx = (uint8_t)(start + i);
         if (!q || !m || idx >= count) {          /* 整格留空：不画空坐标系 */
-            lv_label_set_text(s_cell[i].name, "");
-            lv_label_set_text(s_cell[i].pct, "");
-            lv_label_set_text(s_cell[i].price, "");
+            Ui_SetTextIfChanged(s_cell[i].name, "");
+            Ui_SetTextIfChanged(s_cell[i].pct, "");
+            Ui_SetTextIfChanged(s_cell[i].price, "");
             if (s_cell[i].canvas) Ui_TrendRender(s_cell[i].canvas, NULL, 0);
             continue;
         }
-        lv_label_set_text(s_cell[i].name, cfg[idx].name);
+        Ui_SetTextIfChanged(s_cell[i].name, cfg[idx].name);
         wesr_fmt_pct(b, sizeof b, q[idx].chg_pct, q[idx].valid);
-        lv_label_set_text(s_cell[i].pct, b);
+        Ui_SetTextIfChanged(s_cell[i].pct, b);
         lv_obj_align(s_cell[i].pct, LV_ALIGN_TOP_RIGHT, -5, 5);
         wesr_fmt_price(b, sizeof b, q[idx].last, q[idx].valid);
-        lv_label_set_text(s_cell[i].price, b);
+        Ui_SetTextIfChanged(s_cell[i].price, b);
         if (s_cell[i].canvas) Ui_TrendRender(s_cell[i].canvas, &m[i], q[idx].prev_close);
     }
 }

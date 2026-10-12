@@ -29,6 +29,10 @@ height_(height)
     esp_lcd_panel_io_spi_config_t io_config = {};
     io_config.dc_gpio_num = (gpio_num_t)dc_;
     io_config.cs_gpio_num = (gpio_num_t)cs_;
+    /* 保持示例验证过的 10MHz。手册 §12.1.2 写口 tSCYC 最小 30ns（≈33MHz）、
+       微雪自家 codec_board 甚至默认 60MHz，但**上板实测** 30MHz 只让 lcd 段
+       从 684us 降到 592us（−92us/帧，约占整帧 1%），而整帧瓶颈早已不在 SPI。
+       收益这么小就不冒信号完整性的险了（`tools/spi_bench.py` 可复现这个对比）。 */
     io_config.pclk_hz = 10 * 1000 * 1000;
     io_config.lcd_cmd_bits = 8;
     io_config.lcd_param_bits = 8;
@@ -375,6 +379,47 @@ void DisplayPort::RLCD_SetPixel(uint16_t x, uint16_t y, uint8_t color) {
 }
 
 #endif
+
+/* 整帧批量转换：RGB565 画布 → ST7305 的 1bpp 面板格式。
+   面板字节布局（横屏 400x300，与 AlgorithmOptimization==3 的 LUT 等价，已逐位反解+对拍验证）：
+       idx = byte_x * 75 + block_y,  byte_x = x >> 1,  inv_y = 299 - y,  block_y = inv_y >> 2
+       bit = 7 - ((local_y << 1) | local_x),  local_x = x & 1,  local_y = inv_y & 3
+   ⇒ 一个目标字节锁定 (byte_x, block_y)，覆盖 4 个连续源行 ybot..ybot+3：
+       bit0/1 ← ybot        bit2/3 ← ybot+1      bit4/5 ← ybot+2      bit6/7 ← ybot+3
+       （bit 对内：左列 x=2*byte_x → 高位，右列 x+1 → 低位）
+     其中 ybot = height - 4 - 4*block_y（bit0/1 是本组最上面一行，往下的行进更高的 bit）。
+   这一版位序由 tools/bitorder_search.py 穷举"行序 × 左右序"组合、
+   对逐像素参照实现逐字节比对唯一匹配得到；并有 test/test_blit.c 做常驻回归。
+   遍历方式：外层按"每 4 行"分组（block_y 固定、byte_x 从 0 到 199 连续写 200 字节），
+   内层 4 行 × 2 像素一次产出一个整字节 —— 无逐像素查表、无读改写。
+
+   黑/白判定与原来逐像素路径完全一致（color_map 里 < 0x7fff 判黑 → 清位；白 → 置位），
+   保证画面逐字节不回退。 */
+void DisplayPort::RLCD_BlitLvglFrame(const uint16_t *lv_buf, int src_stride)
+{
+    /* 索引 = (左像素?2:0) + (右像素?1:0)：白=1（置位）、黑=0（清位），与老路径同向 */
+    static const uint8_t kNib[4] = { 0x0, 0x1, 0x2, 0x3 };
+    const int cols = width_ >> 1;                    /* 200 个目标字节 */
+    const int nblk = height_ >> 2;                   /* 75 */
+
+    for (int block_y = 0; block_y < nblk; block_y++) {
+        const int ybot = height_ - 4 - 4 * block_y;  /* bit0/1 所在行（本组最上面一行） */
+        const uint16_t *p0 = lv_buf + (size_t)ybot * src_stride;        /* bit0/1 */
+        const uint16_t *p1 = p0 + src_stride;                           /* bit2/3 */
+        const uint16_t *p2 = p1 + src_stride;                           /* bit4/5 */
+        const uint16_t *p3 = p2 + src_stride;                           /* bit6/7 */
+        uint8_t *out = DispBuffer + block_y;         /* 步进 75，逐 byte_x 递增 */
+
+        for (int byte_x = 0; byte_x < cols; byte_x++, out += nblk) {
+            const int x = byte_x << 1;
+            int n0 = ((p0[x] >= 0x7fff) ? 2 : 0) + ((p0[x + 1] >= 0x7fff) ? 1 : 0);
+            int n1 = ((p1[x] >= 0x7fff) ? 2 : 0) + ((p1[x + 1] >= 0x7fff) ? 1 : 0);
+            int n2 = ((p2[x] >= 0x7fff) ? 2 : 0) + ((p2[x + 1] >= 0x7fff) ? 1 : 0);
+            int n3 = ((p3[x] >= 0x7fff) ? 2 : 0) + ((p3[x + 1] >= 0x7fff) ? 1 : 0);
+            *out = (uint8_t)(kNib[n0] | (kNib[n1] << 2) | (kNib[n2] << 4) | (kNib[n3] << 6));
+        }
+    }
+}
 
 
 #if 0 

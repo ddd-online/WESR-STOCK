@@ -16,6 +16,9 @@ void Board_DumpFb(void);
 void Board_DumpFbFull(void);
 int  Board_PollKey(void);      /* 串口有输入时返回该字节，否则 -1 */
 
+/* 性能基线：每 30 秒或 100 帧把 flush/LVGL 耗时与堆余量打一行到串口 */
+void Board_FlushStats(void);
+
 #ifdef __cplusplus
 }
 #endif

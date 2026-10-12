@@ -40,6 +40,13 @@ idf.py menuconfig      # WESR-STOCK → WiFi SSID (2.4G) / WiFi password
 
 - **只能连 2.4G**（ESP32-S3 不支持 5G）。
 - 凭据写进 `firmware/sdkconfig`，该文件**已加入 .gitignore**，不会进仓库。
+- 命令行构建时可以用一层本地覆盖，免得每次都要开 menuconfig
+  （`firmware/sdkconfig.wifi` 也在 .gitignore 里）：
+
+  ```powershell
+  $env:SDKCONFIG_DEFAULTS = "$PWD\sdkconfig.defaults;$PWD\sdkconfig.wifi"
+  idf.py build
+  ```
 - 留空则开机直接显示反白状态条「未配网」，并按 M4 的计划等小程序 BLE 配网。
 - 没连上时固件会**每 20 秒重试一次**，每次重试前扫描一遍附近 2.4G 网络并打到串口
   （`net: scan: N ap(s)`），方便对照"是密码错还是信号/频段问题"。
@@ -55,10 +62,16 @@ powershell -File tools/gen_fonts.ps1
 - 默认用系统里的 `C:\Windows\Fonts\NotoSansSC-VF.ttf`（OFL 许可、单体 TTF）；
   换字体：`-FontPath C:\Windows\Fonts\simhei.ttf`。
   **不能用 `.ttc` 字体集合**（lv_font_conv 会报 `Unsupported OpenType signature ttcf`）。
-- 产出：`font_cn16.c`（全 CJK 区段 + ASCII，约 672KB）与 `font_cn12.c`（小字用），
-  以及 8 档数字字体 `font_num{78,25,19,16,14,12,11,9}.c`。
+- 产出：`font_cn16.c` / `font_cn12.c`（全 CJK 区段 + ASCII），
+  以及 **6 档数字字体** `font_num{96,25,16,14,12,9}.c`。
+  这份清单必须与 `components/wesr/CMakeLists.txt` 的 `SRCS` 一路对齐 ——
+  曾经 `font_num16`（第 2 页四宫格价格）只在 CMakeLists 里、脚本不生成，
+  "全新克隆 + 跑脚本 + build" 会直接缺文件编不过。
+  改字号时**两处一起改**，并跑一次 `idf.py build` 验证。
 - 每档都带 `▲ ▼ — · ° … → ！？：；、。“”` 等标点 —— 缺哪个字形就会在屏上显示成方框。
 - 中文脚本必须存成 **UTF-8 with BOM**，否则 Windows PowerShell 5.1 按 GBK 解析会报语法错。
+- 目录里如果出现不在清单内的 `font_num*.c`（历史上留下过 104/78/19/11 四档），
+  它们既不在 SRCS 也无任何引用，可以安全删掉（约 418KB）。
 
 ## 5. KEY 键
 
@@ -83,21 +96,53 @@ powershell -File tools/gen_fonts.ps1
 
 ## 7. 无屏验证（开发期自检）
 
-没有相机、也不方便一直盯着屏幕时，可以开：
+### 7.1 抓串口 / 解码画面
+
+本板是 S3 原生 USB-Serial-JTAG，**串口只能读不能写**（往板子写字节会 `Semaphore timeout`），
+所以下面这些工具都是只读的：
 
 ```powershell
-# menuconfig → WESR-STOCK → "开发期：每 15 秒把显存 dump 成 ASCII 到串口"
-# 或者直接往 sdkconfig 追加：CONFIG_WESR_DEBUG_FB_DUMP=y
+python tools\serial_cap.py --port COM5 --secs 90 --out build\log.txt   # 抓一段时间
+powershell -File tools\idf.ps1 -p COM5 -b 460800 flash                 # 复用 IDF 环境
 ```
 
-固件会每 15 秒把 1-bit 显存按 `#`/`.` 打成 ASCII（400×300，约 120KB）从串口输出，
-主机侧读串口、把 `FB-BEGIN-FULL` … `FB-END` 之间的行渲染成 PNG 就能逐像素核对画面。
-**量产固件请关掉**（默认关）：它每 15 秒占用串口约 10 秒。
+把显存 dump 成画面（需要 `CONFIG_WESR_DEBUG_FB_DUMP=y`）：
 
-这条通道**只能读不能写**：本机（S3 原生 USB-Serial-JTAG，COM5）往板子写字节会
-`Semaphore timeout`，.NET `SerialPort.Write` 和 pyserial 都一样 —— 所以别指望从串口
-"按" KEY，要验证某个页面状态就让固件开机直接进那个状态（`s_nav.page/group/idx` +
-`publish_nav()` + `Ui_ShowPage()`），烧一次看一屏，量完再撤掉。
+```powershell
+python tools\fb_to_png.py build\log.txt build\fb.png    # 依赖 Pillow
+```
+
+`Board_DumpFb()` 每次触发都会打 120×200 的半分辨率 ASCII（不需要任何 flag），
+`Board_DumpFbFull()` 打 400×300 全分辨率（约 120KB，串口约 10 秒，**量产固件请关掉**）。
+
+**面板字节约定（改 dump/转换代码前必读）**：1bpp 面板缓冲里 **置位 = 白**；
+一个目标字节覆盖 4 个连续源行，bit0/1 是最上面那行、bit6/7 是最下面那行，
+bit 对内左列是高位。完整推导与回归见 `test/test_blit.c`。
+
+### 7.2 性能打点
+
+`Board_FlushStats()` 每 30 秒（或 100 帧）打一行：
+
+```
+[perf] flush n=5 mean=5295/4890/404 us (total/conv/lcd) max=… skip=2(16882 us)
+       heap=63/63KB largest=31744B psram=7330/7330KB lvgl_mean=4656 us max=99532
+```
+
+- `total/conv/lcd`：整帧 flush / RGB565→1bpp 转换 / SPI 排队
+- `skip`：帧差短路掉的帧数与被省下的时间
+- `lvgl_mean/max`：`lv_timer_handler()` 单轮耗时（含 flush，flush 在它里面同步跑完）
+
+**实测（第 1 页常驻、未配网状态）**：
+
+| 项 | 优化前 | 优化后 |
+| --- | --- | --- |
+| 单帧 RGB565→1bpp 转换 | **140.9 ms** | 4.9 ms（无内容变化时 0，被帧差短路） |
+| 单帧 flush 合计 | **141.5 ms** | 5.3 ms |
+| `lv_timer_handler` 峰值 | **209.8 ms** | 99.5 ms |
+| 开机 bootstrap（1 快照 + 4 分时） | ~30 s，**分时全部失败** | ~1.2 s，全部成功 |
+
+关键结论：**瓶颈从头到尾都不是 SPI**（实测 `lcd` 只有 0.4~0.7 ms/帧），
+而是"逐像素查表 + 读改写"那 12 万次 PSRAM 随机访问。详见 §10。
 
 ## 8. 目录
 
@@ -110,8 +155,8 @@ firmware/
 │   ├── app/                      板端胶水：board_init / cfg_store / net / quote_service /
 │   │                             sensor_task / input_task（含 C++：官方驱动是 C++ 类）
 │   └── ui/                       四页 UI + 1-bit 分时控件 + 生成的字体
-├── test/                         宿主机 assert 测试 + 真实响应 fixture
-└── tools/gen_fonts.ps1           字体生成
+├── test/                         宿主机测试：test_logic.c（纯逻辑）+ test_blit.c（面板位序回归）
+└── tools/                        字体生成、IDF 环境包装、串口抓取、画面解码、位序搜索
 ```
 
 ## 9. 已知限制（v1）
@@ -121,11 +166,60 @@ firmware/
   `http open failed (28674)`）。退出配网会 `nimble_port_deinit()` 把内存还回去，约 10 秒内自动恢复。
 - 充电状态是"电压在涨"的**启发式推断**（板子的 CHG 只是 LED，没接 GPIO），插着 USB 但电压平稳时会显示"未充电"。
 - 串口日志里的中文可能显示成 `?`：IDF v6 控制台默认非 UTF-8（`chcp 65001` 或系统开 UTF-8 可解）。
-- 第 2、3 页的分时接口在部分网络里会被拦：固件已内置双主机回退
-  （`web.ifzq.gtimg.cn` → `proxy.finance.qq.com/ifzqgtimg/...`，同一份数据）。
+- 第 2、3 页的分时接口：优先走**明文 HTTP** 的 `proxy.finance.qq.com`
+  （实测 200，和 HTTPS 同一份 JSON），失败再回退到 HTTPS 的 `web.ifzq.gtimg.cn`。
+  注意 `web.ifzq.gtimg.cn` 的**明文**口会被腾讯网关拦成 302（`stgw`），所以两者不能简单对调。
 - 标题栏的 WiFi/蓝牙/电池图标用的是 LVGL 内置符号字体，与设计稿里手绘的图标形状略有差异。
 
-## 10. BLE 配网（M4）
+## 10. 性能：这次改了什么（2026-10）
+
+三条主因，按收益排序：
+
+1. **刷屏链路**（`port_bsp/display_bsp.cpp` + `wesr/port/board_init.cpp`）
+   原来 flush 对每个像素做 `PixelIndexLUT[x][y]` + `PixelBitLUT[x][y]` + `DispBuffer[idx]` 读改写，
+   两张表共 360KB 放 PSRAM、而索引沿一行是跳着走的（每次 +2 像素跳 75 字节），
+   等于每帧 12 万次必然 cache miss 的 PSRAM 随机访问 —— 实测 **140.9ms/帧**。
+   现在改成"每 4 个连续源行产出 1 个整字节"的顺序转换（`RLCD_BlitLvglFrame`），
+   **两表整块删除（省 360KB PSRAM）**，并加了**帧差短路**（整帧哈希相同就不发 SPI）：
+   实测 **4.9ms/帧，无变化时 0**。位序不许猜 —— `test/test_blit.c` 会拿逐像素老路径逐字节对拍。
+2. **编译/时钟**：`CONFIG_COMPILER_OPTIMIZATION_DEBUG`（`-Og`，不内联）→ `_PERF`，
+   CPU 160 → 240 MHz。已写进 `sdkconfig.defaults`，免得 menuconfig 又改回去。
+3. **网络**：第 1 页快照与第 2/3 页分时都改走明文 HTTP（原来每轮 5 次全新 TCP+TLS 握手），
+   并按 host 缓存 `esp_http_client` 句柄做持久连接复用。另外两个原本的坑：
+   - `timeout_ms` 只是 **socket 级**超时，不是整体超时；
+   - `skip_cert_common_name_check` 在 mbedTLS 4 下**必须同时给一个校验方式**，
+     否则降级路径必然 `SSL_SETUP_FAILED`（原来每只股票白付一次 5 秒超时）。
+
+还做了：
+- **UI 空刷帧**：`ui_util.h` 的 `Ui_SetTextIfChanged()` / `Ui_SetFontIfChanged()`
+  （LVGL 的 `lv_label_set_text` 比较的是**指针**不是内容，`lv_obj_set_style_*` 更是无条件
+  `refresh_style`，而 `full_refresh=1` 下任何一次 invalidate 都是整屏重绘）。
+- **HTTP 响应缓冲**：实测服务端都是 chunked 无 Content-Length，`fetch_headers` 恒返回 -1，
+  所以老的 `cap` 逻辑**每个请求固定 malloc 32KB**、实际只用 4~11KB。改成一块 16KB 常驻缓冲。
+- **读循环完整性**：`r <= 0` 并不等于"读完了"（socket 超时且已读到数据时 IDF 会返回已读字节数），
+  改用 `esp_http_client_is_complete_data_received()` 判定 + 一个有上限的续收窗口，
+  不再把"半截响应 + HTTP 200"当成功。这也是先前"`quotes: 4/4 ok` 但只读了 2049 字节"的根因。
+- **调度**：休市时"按页补一次"不再推后周期刷新（否则补拉后下一次要再等一个 interval，最长 75 秒）；
+  分时的轮询间隔加 30s 下限（服务端是分钟级的，15s 去拉等于 4 次里 3 次白拉）；
+  第 2 页改成**每只到手就刷**，不用等 4 只串行全完（原来画面要空白 2~4 秒）。
+- **BLE**：连上后主动要 30~50ms 的连接间隔 + 4 个周期 slave latency
+  （配网是小包低频，手机侧默认常要 7.5~15ms，会把配网窗口的平均电流抬很高）。
+
+**修正**：先前文档里"分时接口必须走 HTTPS"的结论不对 —— 是 `web.ifzq` 的明文口被网关拦成 302，
+不是"HTTP 不行"；`proxy.finance` 的明文口一直是好的。
+
+**SPI 已实测后关闭**：手册允许到约 33MHz，但上板对比 10MHz（684us/帧）与 30MHz（592us/帧）
+只差 92us、约占整帧 1%，收益远小于风险，所以**保持 10MHz**。
+`tools/spi_bench.py` 可以复现这个对比（把各档位日志喂给它）。
+
+**还没做**（按收益排序，都没验证）：
+- 中文字体覆盖 20902 个汉字、实际用不到 100 个：`font_cn16.c` 6.1MB + `font_cn12.c` 4.7MB
+  占字体总量 94%，且 cmap 碎成 85 段（LVGL 8.4 的字形缓存只有"上一字符"1 项）。
+  用 `gen_fonts.ps1` 精确列举用字即可大幅缩减，但要改生成脚本并重跑全量字体。
+- `ui_trend.c` 已加内容指纹短路（内容没变不重画），但 `wesr_chart_render` 本身仍是全量光栅化。
+- `parse_quote.c` 同一行被 9 个字段各扫一遍 `~`；`parse_minute.c` 逐点 `sscanf`。
+
+## 11. BLE 配网（M4）
 
 长按 KEY 3 秒进配网模式 → 板子广播 Nordic UART Service（名字 `WESR-STOCK`）→
 手机小程序改 WiFi、改股票池、对时。协议（UUID、20 字节分片、8 条命令、错误码）
@@ -151,7 +245,7 @@ python tools\ble_probe.py --cmd '{"cmd":"setInterval","sec":15}'   # 临时改�
 踩过的坑与实测数字写在 `../docs/superpowers/plans/2026-09-28-wesr-stock-ble-provisioning.md`
 的「实机约束」一节 —— 动蓝牙相关代码前先读那一节。
 
-## 11. 参考资料
+## 12. 参考资料
 
 - 板卡知识库：`../KNOWLEDGE.md`（引脚、I2C 地址、屏特性、环境版本）
 - 官方资料归档：`../references/`（`official/` 官方示例包、`datasheets/` 原理图与手册、`upstream/` 文档离线副本）

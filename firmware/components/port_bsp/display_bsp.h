@@ -48,6 +48,13 @@ public:
     void RLCD_Init();
     void RLCD_ColorClear(uint8_t color);
     void RLCD_Display();
+    /* 把 LVGL 的 RGB565 画布整帧转成 ST7305 要的 1bpp 面板格式。
+       lv_buf 的步长（像素）由 src_stride 给出。整帧 15000 字节按顺序写，
+       逐像素查表的老路径（RLCD_SetPixel）保留作对照。
+       面板缓冲指针与长度供帧差比对用。 */
+    void RLCD_BlitLvglFrame(const uint16_t *lv_buf, int src_stride);
+    uint8_t *RLCD_FrameBuffer(void) { return DispBuffer; }
+    int      RLCD_FrameLength(void) const { return DisplayLen; }
 	#if (AlgorithmOptimization != 3)
     void RLCD_SetPortraitPixel(uint16_t x, uint16_t y, uint8_t color);      //竖屏显示
     void RLCD_SetLandscapePixel(uint16_t x, uint16_t y, uint8_t color);     //横屏显示

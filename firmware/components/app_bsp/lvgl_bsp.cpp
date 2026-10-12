@@ -11,6 +11,13 @@ static SemaphoreHandle_t lvgl_mux = NULL;
 
 static const char *TAG = "LvglPort";
 
+/* 性能基线打点：lv_timer_handler() 单轮耗时，含 flush（flush 在 handler 内同步跑完） */
+static volatile uint32_t s_lv_n, s_lv_sum_us, s_lv_max_us;
+
+uint32_t Lvgl_stats_mean_us(void) { uint32_t n = s_lv_n; return n ? s_lv_sum_us / n : 0; }
+uint32_t Lvgl_stats_max_us(void)  { return s_lv_max_us; }
+void     Lvgl_stats_reset(void)   { s_lv_n = 0; s_lv_sum_us = 0; s_lv_max_us = 0; }
+
 static void Increase_lvgl_tick(void *arg)
 {
   	lv_tick_inc(LVGL_TICK_PERIOD_MS);
@@ -35,7 +42,13 @@ static void Lvgl_port_task(void *arg)
   	{
   	  	if (Lvgl_lock(-1)) 
   	  	{
+  	  	  	uint32_t t0 = (uint32_t)esp_timer_get_time();
   	  	  	task_delay_ms = lv_timer_handler();
+  	  	  	uint32_t dt = (uint32_t)esp_timer_get_time() - t0;
+  	  	  	/* C++26 对 volatile 的 ++/+= 已弃用且这里开了 -Werror，写展开形式 */
+  	  	  	s_lv_sum_us = s_lv_sum_us + dt;
+  	  	  	s_lv_n = s_lv_n + 1;
+  	  	  	if (dt > s_lv_max_us) s_lv_max_us = dt;
   	  	  	//Release the mutex
   	  	  	Lvgl_unlock();
   	  	}

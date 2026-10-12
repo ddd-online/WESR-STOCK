@@ -5,6 +5,8 @@
 #include "cfg_store.h"
 #include "quote_service.h"
 #include "i2c_equipment.h"
+#include "lvgl_bsp.h"      /* Lvgl_lock / Lvgl_unlock */
+#include "ui_root.h"       /* Ui_UpdateHeader */
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -35,6 +37,17 @@ static void radio_give(void)
     if (s_radio_mtx) xSemaphoreGive(s_radio_mtx);
 }
 
+/* WiFi 状态一变就刷顶栏图标。
+   以前只在"下一次 sensor（10s）/行情刷新（15s）"时才刷，于是**开机连上以后
+   顶栏 WiFi 图标还会挂着 ✕ 十几秒**（实测画面 dump 里就能看到：同一份日志里
+   已经 `got ip` + 快照 200 了，图标还是"未连接"）。 */
+static void header_refresh(void)
+{
+    if (!Lvgl_lock(300)) return;
+    Ui_UpdateHeader(AppState_Status());
+    Lvgl_unlock();
+}
+
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
@@ -45,6 +58,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         AppState_Lock();
         AppState_Status()->wifi_connected = false;
         AppState_Unlock();
+        header_refresh();
         if (s_have_creds) esp_wifi_connect();    /* 断了就一直重连 */
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
@@ -54,6 +68,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         st->wifi_connected = true;
         AppState_Unlock();
         ESP_LOGI(TAG, "got ip " IPSTR, IP2STR(&e->ip_info.ip));
+        header_refresh();
         if (s_wifi_ev) xEventGroupSetBits(s_wifi_ev, WIFI_OK_BIT);
     }
 }
@@ -127,6 +142,12 @@ static void on_time_synced(struct timeval *tv)
                 (uint8_t)t.tm_hour, (uint8_t)t.tm_min, (uint8_t)t.tm_sec);
     ESP_LOGI(TAG, "sntp synced %04d-%02d-%02d %02d:%02d:%02d", t.tm_year + 1900,
              t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+    /* 回读校验：不读的话，"RTC 写失败"会表现成页面 1 永远停在 00:00 而无任何报错 */
+    rtcTimeStruct_t back;
+    Rtc_GetTime(&back);
+    ESP_LOGI(TAG, "rtc readback %04u-%02u-%02u %02u:%02u:%02u", (unsigned)back.year,
+             (unsigned)back.month, (unsigned)back.day, (unsigned)back.hour,
+             (unsigned)back.minute, (unsigned)back.second);
 }
 
 void Net_TimeSync(int timeout_ms)

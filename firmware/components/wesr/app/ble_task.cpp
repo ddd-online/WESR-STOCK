@@ -185,12 +185,28 @@ static int gap_cb(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0) {
             s_conn = event->connect.conn_handle;
             ESP_LOGI(TAG, "connected");
+            /* 配网是小包低频交互（20 字节分片、几秒一条命令），手机侧默认常常请求
+               7.5~15ms 的连接间隔，会把配网窗口的平均电流抬得很高。
+               这里主动要一个"省电优先"的参数：30~50ms 间隔、允许 4 个周期的 slave latency。 */
+            struct ble_gap_upd_params up;
+            memset(&up, 0, sizeof up);
+            up.itvl_min = 24;            /* 24 * 1.25ms = 30ms */
+            up.itvl_max = 40;            /* 40 * 1.25ms = 50ms */
+            up.latency = 4;
+            up.supervision_timeout = 600;   /* 6s：比 interval*(latency+1) 留足余量 */
+            int urc = ble_gap_update_params(s_conn, &up);
+            if (urc) ESP_LOGW(TAG, "conn param update rc=%d", urc);
             set_bt(true);
         } else {
             ESP_LOGW(TAG, "connect failed: %d", event->connect.status);
             s_conn = BLE_HS_CONN_HANDLE_NONE;
             advertise();
         }
+        return 0;
+    case BLE_GAP_EVENT_CONN_UPDATE:
+        /* 这个事件的负载只有 status + conn_handle；实际生效的参数要另外用
+           ble_gap_conn_find() 去查，这里就不为了打日志多查一次了。 */
+        ESP_LOGI(TAG, "conn updated: status=%d", event->conn_update.status);
         return 0;
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "disconnected: reason=%d", event->disconnect.reason);

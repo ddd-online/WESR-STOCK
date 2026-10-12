@@ -6,6 +6,7 @@
 #include "ui_page2.h"
 #include "ui_page3.h"
 #include "ui_page4.h"
+#include "ui_util.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -24,7 +25,7 @@ void Ui_StatusBar(const char *text, bool alert)
     if (!s_bar) return;
     if (!text || !text[0]) { lv_obj_add_flag(s_bar, LV_OBJ_FLAG_HIDDEN); return; }
     lv_obj_clear_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_bar, text);
+    Ui_SetTextIfChanged(s_bar, text);
     lv_obj_set_style_bg_opa(s_bar, alert ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     lv_obj_set_style_bg_color(s_bar, lv_color_black(), 0);
     lv_obj_set_style_text_color(s_bar, alert ? lv_color_white() : lv_color_black(), 0);
@@ -93,7 +94,7 @@ void Ui_UpdateHeader(const wesr_status_t *st)
     char b[16];
     if (st->battery_v > 0.0f) snprintf(b, sizeof b, "%u%%", (unsigned)st->battery_pct);
     else                      snprintf(b, sizeof b, "--%%");
-    lv_label_set_text(s_batt_label, b);
+    Ui_SetTextIfChanged(s_batt_label, b);
 
     const char *icon = LV_SYMBOL_BATTERY_EMPTY;
     if (st->charging)            icon = LV_SYMBOL_CHARGE;
@@ -101,7 +102,7 @@ void Ui_UpdateHeader(const wesr_status_t *st)
     else if (st->battery_pct >= 65) icon = LV_SYMBOL_BATTERY_3;
     else if (st->battery_pct >= 40) icon = LV_SYMBOL_BATTERY_2;
     else if (st->battery_pct >= 15) icon = LV_SYMBOL_BATTERY_1;
-    lv_label_set_text(s_batt_icon, icon);
+    Ui_SetTextIfChanged(s_batt_icon, icon);
 
     if (st->wifi_connected) lv_obj_add_flag(s_wifi_x, LV_OBJ_FLAG_HIDDEN);
     else                    lv_obj_clear_flag(s_wifi_x, LV_OBJ_FLAG_HIDDEN);

@@ -100,42 +100,203 @@ void Quote_NavSetPairing(bool on)
 }
 
 /* ---------- HTTP ---------- */
+/* 连接复用：按 host 缓存 esp_http_client 句柄。
+   之前每个请求都 init→open→close→cleanup，cleanup 会连 transport 一起销毁，
+   于是每轮 5 次全新 TCP+TLS 握手（实测每轮多花数秒、且在 BLE 常驻时更容易撞上内部堆不够）。
+   HTTP/1.1 默认持久连接，所以只要不销毁句柄、且上一次响应读完，就能复用同一条连接。
+   安全阀：响应被截断（total == cap-1）或没读完整时把该连接标记丢弃，下次重建，
+   避免"残留字节被当成下一次的响应头"。 */
+#define HTTP_CACHE_N 4
+
+/* 响应缓冲：实测快照 4.2KB、分时 10.9KB，且服务端都是 chunked 无 Content-Length。
+   之前每个请求按 cap=32768 malloc、用完 free（实际只用 4~11KB），
+   每轮 4~5 次 32KB 的 PSRAM 分配回收既浪费也容易碎。改成一块常驻 16KB。 */
+#define HTTP_BUF_SIZE        (16 * 1024)
+/* 一次请求最多给多久收完响应（socket 级 timeout_ms 之外的整体上限） */
+#define HTTP_RECV_BUDGET_MS  8000
+
+static char *s_http_buf;
+
+static char *http_buf_get(void)
+{
+    if (!s_http_buf) s_http_buf = (char *)heap_caps_malloc(HTTP_BUF_SIZE, MALLOC_CAP_SPIRAM);
+    return s_http_buf;
+}
+
+typedef struct {
+    char *key;                     /* "host:port"；NULL 表示空槽 */
+    esp_http_client_handle_t h;
+} http_slot_t;
+
+static http_slot_t s_http_slots[HTTP_CACHE_N];
+
+static void http_cache_drop(http_slot_t *s)
+{
+    if (s->h) {
+        esp_http_client_close(s->h);
+        esp_http_client_cleanup(s->h);
+        s->h = NULL;
+    }
+    free(s->key);          /* 句柄被借出时 h 为 NULL，但 key 还在：两件事要分开做 */
+    s->key = NULL;
+}
+
+static void http_cache_put(const char *key, esp_http_client_handle_t h)
+{
+    int free_i = -1;
+    for (int i = 0; i < HTTP_CACHE_N; i++) {
+        if (s_http_slots[i].key && strcmp(s_http_slots[i].key, key) == 0) {
+            http_cache_drop(&s_http_slots[i]);      /* 同 host 旧连接换掉 */
+            free_i = i;
+            break;
+        }
+        if (!s_http_slots[i].key && free_i < 0) free_i = i;
+    }
+    if (free_i < 0) {                               /* 满了：淘汰 0 号 */
+        http_cache_drop(&s_http_slots[0]);
+        free_i = 0;
+    }
+    s_http_slots[free_i].key = strdup(key);
+    s_http_slots[free_i].h = h;
+}
+
+static esp_http_client_handle_t http_cache_get(const char *key)
+{
+    for (int i = 0; i < HTTP_CACHE_N; i++) {
+        if (s_http_slots[i].key && strcmp(s_http_slots[i].key, key) == 0) {
+            esp_http_client_handle_t h = s_http_slots[i].h;
+            s_http_slots[i].h = NULL;               /* 借出：槽位留着 key 方便还回 */
+            return h;
+        }
+    }
+    return NULL;
+}
+
 /* verify=false 时不校验证书（spec §4.4 的降级策略：公开行情数据、无凭证） */
 static char *http_get_ex(const char *url, int *out_len, bool verify)
 {
-    esp_http_client_config_t ccfg;
-    memset(&ccfg, 0, sizeof ccfg);
-    ccfg.url = url;
-    ccfg.timeout_ms = 5000;
-    if (verify) {
-        ccfg.crt_bundle_attach = esp_crt_bundle_attach;
-    } else {
-        ccfg.skip_cert_common_name_check = true;   /* 降级：不校验证书 */
+    /* 从 URL 里取 "host:port" 当复用键 */
+    char key[80];
+    {
+        const char *p = strstr(url, "://");
+        p = p ? p + 3 : url;
+        size_t n = 0;
+        while (p[n] && p[n] != '/' && n < sizeof key - 1) { key[n] = p[n]; n++; }
+        key[n] = 0;
     }
-    ccfg.user_agent = "Mozilla/5.0";
 
-    esp_http_client_handle_t c = esp_http_client_init(&ccfg);
-    if (!c) return NULL;
+    /* 只有"已校验成功"的连接才复用；降级连接（不校验）不复用，免得把不安全会话留着 */
+    esp_http_client_handle_t c = verify ? http_cache_get(key) : NULL;
+    bool reuse = (c != NULL);
+
+    if (!c) {
+        esp_http_client_config_t ccfg;
+        memset(&ccfg, 0, sizeof ccfg);
+        ccfg.url = url;
+        ccfg.timeout_ms = 4000;
+        ccfg.buffer_size = 2048;       /* 默认 512：11KB 响应要读 22 轮 */
+        ccfg.buffer_size_tx = 512;
+        ccfg.disable_auto_redirect = true;   /* 3xx 不静默跟随（每次跟随都是白付一次握手） */
+        ccfg.keep_alive_enable = true;
+        ccfg.keep_alive_idle = 5;
+        ccfg.keep_alive_interval = 5;
+        ccfg.keep_alive_count = 3;
+        if (verify) {
+            ccfg.crt_bundle_attach = esp_crt_bundle_attach;
+        } else {
+            ccfg.skip_cert_common_name_check = true;   /* 降级：不校验 CN */
+            /* mbedTLS 4 下只设 skip_cert_common_name_check 不够：
+               "No server verification option set ... SSL_SETUP_FAILED"，降级必然失败。
+               这里补上 crt_bundle，让降级路径至少能建起会话。 */
+            ccfg.crt_bundle_attach = esp_crt_bundle_attach;
+        }
+        ccfg.user_agent = "Mozilla/5.0";
+        c = esp_http_client_init(&ccfg);
+        if (!c) return NULL;
+    }
+
     char *buf = NULL;
-    esp_err_t oe = esp_http_client_open(c, 0);
+    esp_err_t oe = ESP_FAIL;
+
+    /* 复用的连接可能已被服务端关掉（keep-alive 到期），失败就丢掉重建再试一次 */
+    for (int attempt = 0; attempt < 2; attempt++) {
+        oe = esp_http_client_open(c, 0);
+        if (oe == ESP_OK) break;
+        if (reuse) {
+            ESP_LOGI(TAG, "复用连接不可用(%d)，重建: %s", (int)oe, key);
+            esp_http_client_cleanup(c);
+            c = NULL;
+            reuse = false;
+            {
+                esp_http_client_config_t ccfg;
+                memset(&ccfg, 0, sizeof ccfg);
+                ccfg.url = url;
+                ccfg.timeout_ms = 4000;
+                ccfg.buffer_size = 2048;
+                ccfg.buffer_size_tx = 512;
+                ccfg.disable_auto_redirect = true;
+                ccfg.keep_alive_enable = true;
+                ccfg.keep_alive_idle = 5;
+                ccfg.keep_alive_interval = 5;
+                ccfg.keep_alive_count = 3;
+                if (verify) ccfg.crt_bundle_attach = esp_crt_bundle_attach;
+                else { ccfg.skip_cert_common_name_check = true; ccfg.crt_bundle_attach = esp_crt_bundle_attach; }
+                ccfg.user_agent = "Mozilla/5.0";
+                c = esp_http_client_init(&ccfg);
+                if (!c) return NULL;
+            }
+            continue;
+        }
+        break;
+    }
+
+    bool keep = false;
     if (oe == ESP_OK) {
         int len = esp_http_client_fetch_headers(c);
         int status = esp_http_client_get_status_code(c);
-        /* chunked/无 Content-Length 时 len 会是 -1，所以不能只按 len 分配 */
-        size_t cap = (len > 0 && len < 65536) ? (size_t)len + 1 : 32768;
-        buf = (char *)heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
-        if (buf) {
-            size_t total = 0;
+        buf = http_buf_get();
+        if (!buf) {
+            ESP_LOGE(TAG, "响应缓冲分配失败");
+        } else {
+            /* 实测：快照 4.2KB / 分时 10.9KB，且服务端都是 chunked 无 Content-Length
+               （fetch_headers 恒返回 -1）。所以不再按 len 每次 malloc，改用一块 16KB 常驻
+               缓冲：消掉每轮 5 次 32KB 的 PSRAM 分配回收，也避免 PSRAM 碎片。 */
+            const size_t cap = HTTP_BUF_SIZE;
+            size_t total = 0, used = 0;
+            uint32_t t_start = (uint32_t)(esp_timer_get_time() / 1000);
+            bool truncated = false;
             for (;;) {
-                int r = esp_http_client_read(c, buf + total, (int)(cap - 1 - total));
-                if (r <= 0) break;
-                total += (size_t)r;
-                if (total >= cap - 1) break;
+                if (used >= cap - 1) { truncated = true; break; }
+                int r = esp_http_client_read(c, buf + used, (int)(cap - 1 - used));
+                if (r > 0) {
+                    used += (size_t)r;
+                    total = used;
+                    continue;
+                }
+                /* r <= 0 并不等于"读完了"：socket 超时且已读到数据时 IDF 会返回已读字节数，
+                   EAGAIN 则返回 0。所以这里要拿 is_complete_data_received 判完整性，
+                   给它一段有上限的时间继续收，避免把"半截响应 + HTTP 200"当成功。 */
+                bool complete = esp_http_client_is_complete_data_received(c);
+                uint32_t elapsed = (uint32_t)(esp_timer_get_time() / 1000) - t_start;
+                if (complete || elapsed > HTTP_RECV_BUDGET_MS) {
+                    if (!complete) truncated = true;
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(20));
             }
-            buf[total] = 0;
-            ESP_LOGI(TAG, "http %d len=%d read=%u", status, len, (unsigned)total);
-            if (total == 0) { free(buf); buf = NULL; }
-            else if (out_len) *out_len = (int)total;
+            (void)total;
+            buf[used] = 0;
+            bool complete = esp_http_client_is_complete_data_received(c);
+            ESP_LOGI(TAG, "http %d len=%d read=%u complete=%d trunc=%d reuse=%d",
+                     status, len, (unsigned)used, (int)complete, (int)truncated, (int)reuse);
+            if (used == 0) {
+                buf = NULL;
+            } else if (out_len) {
+                *out_len = (int)used;
+            } else if (len > 0 && (size_t)len != used) {
+                ESP_LOGW(TAG, "  Content-Length=%d 但只读到 %u 字节", len, (unsigned)used);
+            }
+            keep = (status >= 200 && status < 300) && !truncated && complete;
         }
     } else {
         ESP_LOGW(TAG, "http open failed (%d, verify=%d): %s", (int)oe, (int)verify, url);
@@ -164,8 +325,14 @@ static char *http_get_ex(const char *url, int *out_len, bool verify)
             }
         }
     }
-    esp_http_client_close(c);
-    esp_http_client_cleanup(c);
+
+    if (keep) {
+        http_cache_put(key, c);
+    } else {
+        esp_http_client_close(c);
+        esp_http_client_cleanup(c);
+    }
+
     return buf;
 }
 
@@ -174,7 +341,9 @@ static char *http_get(const char *url, int *out_len)
 {
     char *b = http_get_ex(url, out_len, true);
     if (!b) {
-        ESP_LOGW(TAG, "TLS 校验失败，降级为不校验重试: %s", url);
+        /* 明文 http 也会走到这里（第一次连接失败时），日志别说成 TLS 问题 */
+        ESP_LOGW(TAG, "%s 首次失败，重建连接重试: %s",
+                 (strncmp(url, "https:", 6) == 0) ? "TLS 校验失败" : "open 失败", url);
         b = http_get_ex(url, out_len, false);
     }
     return b;
@@ -183,7 +352,8 @@ static char *http_get(const char *url, int *out_len)
 /* ---------- 第 1 页：批量快照 ---------- */
 static bool fetch_quotes(void)
 {
-    char url[320] = "https://qt.gtimg.cn/q=";
+    /* curl 出来的明文 http 口，实测可用；省掉整个 TLS 握手（第 1 页每轮都拉）。 */
+    char url[320] = "http://qt.gtimg.cn/q=";
     for (int i = 0; i < s_cfg->count; i++) {
         if (i) strncat(url, ",", sizeof url - strlen(url) - 1);
         strncat(url, s_cfg->stocks[i].code, sizeof url - strlen(url) - 1);
@@ -219,39 +389,47 @@ static bool fetch_quotes(void)
         AppState_Status()->data_day = (uint32_t)(q[0].stamp / 1000000ULL);
     }
     AppState_Unlock();
-    free(body);
+    /* 缓冲是常驻的，不释放（见 http_buf_get） */
     ESP_LOGI(TAG, "quotes: %d/%d ok", hits, s_cfg->count);
     return hits > 0;
 }
 
 /* ---------- 第 2/3 页：分时（单只一次请求，响应自带快照与市场状态） ---------- */
-/* 两个主机返回同一份数据；实测某些网络里 web.ifzq 连不上而 proxy.finance 可以，
-   所以两个都试一遍（都是腾讯自己的接口）。 */
+/* 优先走**明文 HTTP**，省掉 4 次 TLS 握手（本机网络上握手本身就不稳，实测
+   mbedtls_ssl_handshake -0x008D；而旧的"降级不校验"路径在 mbedTLS 4 下必然失败，
+   每只股票白付一次 5 秒超时）。实测网关行为（PC 上逐个确认过）：
+     - http://web.ifzq.gtimg.cn/...      → 302（腾讯 stgw 拦明文，不跟跳转就拿不到数据）
+     - http://proxy.finance.qq.com/...   → 200，和 HTTPS 同一份 10895 字节 JSON
+   所以明文只对 proxy.finance 有效，最后再用 HTTPS 的 web.ifzq 兜底（某些网络反过来）。 */
 static const char *kMinuteUrls[] = {
+    "http://proxy.finance.qq.com/ifzqgtimg/appstock/app/minute/query?code=%s",
     "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=%s",
-    "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/minute/query?code=%s",
 };
 
 static bool fetch_minute(const char *code, wesr_minute_t *out, wesr_quote_t *qout,
                          bool *closed, uint32_t *day)
 {
     char url[192];
-    char *body = NULL;
-    for (int h = 0; h < 2 && !body; h++) {
+    /* 回退判据必须是"解析出数据"。以前只要 body 非空就跳出循环，
+       于是 302/错误页这种"有响应但没数据"的情况不会走备用主机。 */
+    for (int h = 0; h < 2; h++) {
         snprintf(url, sizeof url, kMinuteUrls[h], code);
-        body = http_get(url, NULL);
-    }
-    if (!body) return false;
+        char *body = http_get(url, NULL);
+        if (!body) continue;
 
-    bool ok = wesr_parse_minute_json(body, out);
-    wesr_minute_meta_t meta;
-    if (wesr_parse_minute_meta(body, &meta)) {
-        if (meta.has_quote && qout) { *qout = meta.quote; qout->valid = true; }
-        if (closed) *closed = meta.closed;
-        if (day && out->valid) *day = out->day;
+        bool ok = wesr_parse_minute_json(body, out);
+        if (ok) {
+            wesr_minute_meta_t meta;
+            if (wesr_parse_minute_meta(body, &meta)) {
+                if (meta.has_quote && qout) { *qout = meta.quote; qout->valid = true; }
+                if (closed) *closed = meta.closed;
+                if (day && out->valid) *day = out->day;
+            }
+            return true;     /* 缓冲常驻，不释放 */
+        }
+        ESP_LOGW(TAG, "分时解析失败(host %d)，试备用主机: %s", h, code);
     }
-    free(body);
-    return ok;
+    return false;
 }
 
 static bool fetch_page_minutes(void)
@@ -277,6 +455,9 @@ static bool fetch_page_minutes(void)
             AppState_Status()->minutes_ok = true;
             AppState_Status()->minutes_key = base;   /* 缓存归属：休市判 need 要用 */
             AppState_Unlock();
+            /* 每只到手就刷：第 2 页 4 只串行发请求，等全完再刷的话画面要空白 2~4 秒；
+               分页刷的代价已经被帧差短路兜住了。 */
+            Quote_RefreshUi();
         } else {
             all_ok = false;
         }
@@ -439,6 +620,12 @@ void Quote_Run(wesr_app_cfg_t *cfg)
         sched.interval_s = (trading && closed_now)
                          ? 60
                          : (s_cfg->refresh_sec ? s_cfg->refresh_sec : 15);
+        /* 第 2/3 页的分时数据服务端是**分钟级**的（实测同一分钟内响应内容不变），
+           按 refresh_sec=15s 去拉等于每 4 次里 3 次白拉：那 4 次请求 + LVGL 重绘全白付。
+           快照仍是 15s（现价要跟手），分时给它一个至少 30s 的下限。 */
+        if (page == 2 || page == 3) {
+            if (sched.interval_s < 30) sched.interval_s = 30;
+        }
 
         bool need = false;
         if (closed_now) {
@@ -458,7 +645,18 @@ void Quote_Run(wesr_app_cfg_t *cfg)
         wesr_fetch_t what = wesr_sched_tick(&sched, now_ms, may_fetch);
         if (what != WESR_FETCH_NONE) {
             bool ok = (what == WESR_FETCH_QUOTES) ? fetch_quotes() : fetch_page_minutes();
-            wesr_sched_result(&sched, ok, now_ms);
+            if (ok) {
+                wesr_sched_result(&sched, true, now_ms);
+            } else if (closed_now && need) {
+                /* "按页补一次"不应该推后周期刷新：否则休市切页补到数据后，
+                   下一次真正的周期拉取要再等一个 interval（最长 75 秒）。
+                   记失败（进退避、更新 offline）但把 next_ms 留在当刻，
+                   主循环 200ms 后再判一次 —— 那时 need 已为 false，会正常走周期。 */
+                wesr_sched_result(&sched, false, now_ms);
+                sched.next_ms = now_ms;
+            } else {
+                wesr_sched_result(&sched, false, now_ms);
+            }
             AppState_Lock();
             if (ok) {
                 AppState_Status()->last_ok_ms = now_ms;

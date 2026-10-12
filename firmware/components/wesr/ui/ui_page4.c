@@ -2,6 +2,7 @@
 #include "lvgl.h"
 #include "ui_theme.h"
 #include "ui_page4.h"
+#include "ui_util.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -86,7 +87,8 @@ static void setv(int idx, const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(b, sizeof b, fmt, ap);
     va_end(ap);
-    lv_label_set_text(s_val[idx], b);
+    /* 第 4 页大部分值 10 秒内根本不变，重复设文字等于白付一次整屏重绘 */
+    Ui_SetTextIfChanged(s_val[idx], b);
 }
 
 void Ui_Page4Update(const wesr_status_t *st)

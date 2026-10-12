@@ -3,6 +3,7 @@
 #include "lvgl.h"
 #include "ui_theme.h"
 #include "ui_page1.h"
+#include "ui_util.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -124,17 +125,17 @@ lv_obj_t *Ui_Page1Create(void)
 
 void Ui_Page1SetClock(const char *hhmm, const char *date)
 {
-    lv_label_set_text(s_clock, hhmm);
-    lv_label_set_text(s_date, date);
+    Ui_SetTextIfChanged(s_clock, hhmm);
+    Ui_SetTextIfChanged(s_date, date);
 }
 
 void Ui_Page1SetEnv(float temp_c, float humi_pct)
 {
     char b[16];
     snprintf(b, sizeof b, "%.1f", temp_c);
-    lv_label_set_text(s_temp, b);
+    Ui_SetTextIfChanged(s_temp, b);
     snprintf(b, sizeof b, "%.0f%%", humi_pct);
-    lv_label_set_text(s_humi, b);
+    Ui_SetTextIfChanged(s_humi, b);
 }
 
 void Ui_Page1Update(const wesr_quote_t *q, const wesr_stock_cfg_t *cfg, uint8_t count)
@@ -142,19 +143,20 @@ void Ui_Page1Update(const wesr_quote_t *q, const wesr_stock_cfg_t *cfg, uint8_t 
     char b[32];
     for (int i = 0; i < UI_P1_ROWS; i++) {
         if (!q || i >= count) {
-            lv_label_set_text(s_mark[i], "");
-            lv_label_set_text(s_pct[i], "");
-            lv_label_set_text(s_price[i], "");
+            Ui_SetTextIfChanged(s_mark[i], "");
+            Ui_SetTextIfChanged(s_pct[i], "");
+            Ui_SetTextIfChanged(s_price[i], "");
             continue;
         }
-        lv_label_set_text(s_mark[i], cfg[i].mark);
+        Ui_SetTextIfChanged(s_mark[i], cfg[i].mark);
         wesr_fmt_pct(b, sizeof b, q[i].chg_pct, q[i].valid);
-        lv_label_set_text(s_pct[i], b);
+        Ui_SetTextIfChanged(s_pct[i], b);
         /* 涨跌右对齐 */
         lv_obj_align(s_pct[i], LV_ALIGN_TOP_RIGHT, -4, 4);
         wesr_fmt_price(b, sizeof b, q[i].last, q[i].valid);
-        lv_label_set_text(s_price[i], b);
-        lv_obj_set_style_text_font(s_price[i],
-            (q[i].valid && wesr_price_font_px(q[i].last) == 12) ? &font_num12 : &font_num14, 0);
+        Ui_SetTextIfChanged(s_price[i], b);
+        /* 字体只在档位真的切换时设：lv_obj_set_style_* 无条件 refresh_style */
+        Ui_SetFontIfChanged(s_price[i],
+            (q[i].valid && wesr_price_font_px(q[i].last) == 12) ? &font_num12 : &font_num14);
     }
 }

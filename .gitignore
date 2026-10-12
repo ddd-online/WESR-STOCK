@@ -19,3 +19,12 @@ firmware/components/ExternLib/
 firmware/components/wesr/ui/font_*.c
 # sdkconfig 由 sdkconfig.defaults 生成；本地这份里放着 WiFi 凭据（menuconfig），不能进仓库
 firmware/sdkconfig
+# 本地 WiFi 凭据覆盖层（构建时用 SDKCONFIG_DEFAULTS 拼在 defaults 后面，见 firmware/README §3）
+firmware/sdkconfig.wifi
+firmware/sdkconfig.bak.*
+firmware/sdkconfig.old
+
+# 编辑器/工具的本机配置：里面是本机绝对路径，入库会污染别人的环境
+.vscode/
+# 微信开发者工具的机器本地配置（appid/libVersion/编译开关等）
+miniprogram/project.private.config.json

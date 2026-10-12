@@ -1,4 +1,4 @@
-﻿param(
+param(
     # 默认用 Noto Sans SC：单体 TTF（lv_font_conv 不支持 .ttc 集合）、OFL 许可可再分发
     [string]$FontPath = 'C:\Windows\Fonts\NotoSansSC-VF.ttf'
 )
@@ -20,7 +20,9 @@ $numRange = "0x20-0x7F,$punct"
 # 中文这一档也带上 ASCII：日期/编号这类混排（"9月27日"、"3/8"）要用到数字
 $cnRange  = "0x20-0x7F,0x4E00-0x9FA5,$punct,0x3000,0x3001-0x3002,0xFF01,0xFF08,0xFF09,0xFF0C,0xFF1A,0xFF1B,0xFF1F"
 
-# 只生成实际用到的字号（96=时钟、25=温湿度值、16=四宫格价格、14/12=现价与涨跌、9=小字）
+# 只生成实际用到的字号。这份清单必须与 components/wesr/CMakeLists.txt 的 SRCS 一致，
+# 否则"全新克隆 + 跑本脚本 + idf.py build"会缺文件编不过（font_num16 曾经就漏了）。
+#   96 = 时钟、25 = 温湿度值、16 = 第 2 页四宫格价格、14 = 第 1 页现价、12 = 涨跌幅、9 = 小字
 foreach ($sz in 96, 25, 16, 14, 12, 9) {
     Write-Host "生成 font_num$sz.c ..."
     npx --yes lv_font_conv --font $sys --size $sz --bpp 1 --no-compress `

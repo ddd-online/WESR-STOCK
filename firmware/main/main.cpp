@@ -92,6 +92,7 @@ extern "C" void app_main(void)
     /* 主循环：正常情况下什么都不做（各任务自管）。
        开发期可开 CONFIG_WESR_DEBUG_FB_DUMP 定期回读显存，用于无相机自检画面。 */
     for (;;) {
+        Board_FlushStats();      /* 每 30 秒或 100 帧打一次刷屏性能基线 */
 #if CONFIG_WESR_DEBUG_FB_DUMP
         static uint32_t last_dump_ms;
         uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);

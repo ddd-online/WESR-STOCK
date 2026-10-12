@@ -3,6 +3,7 @@
 #include "ui_theme.h"
 #include "ui_page3.h"
 #include "ui_trend.h"
+#include "ui_util.h"
 #include <stdio.h>
 
 static lv_obj_t *s_name, *s_idx, *s_pct, *s_price, *s_prev;
@@ -97,32 +98,32 @@ void Ui_Page3Update(const wesr_minute_t *m, const wesr_quote_t *q,
 {
     char b[96], t[32], pb[16];
     if (!q || !cfg || count == 0 || idx >= count) {
-        lv_label_set_text(s_name, "未配置股票");
-        lv_label_set_text(s_idx, "");
-        lv_label_set_text(s_pct, "");
-        lv_label_set_text(s_price, "");
-        lv_label_set_text(s_prev, "");
-        lv_label_set_text(s_ohlc, "");
+        Ui_SetTextIfChanged(s_name, "未配置股票");
+        Ui_SetTextIfChanged(s_idx, "");
+        Ui_SetTextIfChanged(s_pct, "");
+        Ui_SetTextIfChanged(s_price, "");
+        Ui_SetTextIfChanged(s_prev, "");
+        Ui_SetTextIfChanged(s_ohlc, "");
         if (s_canvas) Ui_TrendRender(s_canvas, NULL, 0);
         return;
     }
-    lv_label_set_text(s_name, cfg[idx].name);
+    Ui_SetTextIfChanged(s_name, cfg[idx].name);
     snprintf(t, sizeof t, "%d/%d", idx + 1, count);
-    lv_label_set_text(s_idx, t);
+    Ui_SetTextIfChanged(s_idx, t);
     wesr_fmt_pct(b, sizeof b, q[idx].chg_pct, q[idx].valid);
-    lv_label_set_text(s_pct, b);
+    Ui_SetTextIfChanged(s_pct, b);
     wesr_fmt_price(b, sizeof b, q[idx].last, q[idx].valid);
-    lv_label_set_text(s_price, b);
+    Ui_SetTextIfChanged(s_price, b);
     wesr_fmt_price(pb, sizeof pb, q[idx].prev_close, q[idx].valid);
     snprintf(t, sizeof t, "昨收 %s", pb);
-    lv_label_set_text(s_prev, t);
+    Ui_SetTextIfChanged(s_prev, t);
 
     if (m && m->valid && q[idx].valid) {
         snprintf(b, sizeof b, "开%8.2f  高%8.2f  低%8.2f  量%.0f手",
                  q[idx].open, q[idx].high, q[idx].low, (double)q[idx].vol_hands);
-        lv_label_set_text(s_ohlc, b);
+        Ui_SetTextIfChanged(s_ohlc, b);
     } else {
-        lv_label_set_text(s_ohlc, "开 —　高 —　低 —　量 —");
+        Ui_SetTextIfChanged(s_ohlc, "开 —　高 —　低 —　量 —");
     }
     if (s_canvas) Ui_TrendRender(s_canvas, m, q[idx].prev_close);
 }
