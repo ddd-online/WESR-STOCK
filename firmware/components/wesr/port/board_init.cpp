@@ -1,5 +1,6 @@
 #include "board_init.h"
 #include "display_bsp.h"
+#include "app_state.h"     /* 行情缓存状态打点见 Board_FlushStats */
 #include "i2c_bsp.h"
 #include "i2c_equipment.h"
 #include "lvgl_bsp.h"
@@ -82,6 +83,23 @@ extern "C" void Board_FlushStats(void)
            (unsigned)hk, (unsigned)s_st_heap_min_kb,
            (unsigned)lg, (unsigned)pk, (unsigned)s_st_psram_min_kb,
            (unsigned)Lvgl_stats_mean_us(), (unsigned)Lvgl_stats_max_us());
+
+    /* 行情缓存状态：排查"某页不刷新"这类问题时，一眼能看出是没拉到、还是拉到了画不出来。
+       顺便给状态条提供依据。 */
+    {
+        AppState_Lock();
+        wesr_status_t *st = AppState_Status();
+        bool m0 = st->minutes[0].valid, m1 = st->minutes[1].valid;
+        bool m2 = st->minutes[2].valid, m3 = st->minutes[3].valid;
+        printf("[state] page=%u group=%u idx=%u closed=%d offline=%d day=%lu"
+               " quotes0=%d minutes=%d%d%d%d key=%u n0=%u ok=%d fail=%lu\n",
+               (unsigned)st->page, (unsigned)st->group, (unsigned)st->idx,
+               (int)st->closed, (int)st->offline, (unsigned long)st->data_day,
+               (int)st->quotes[0].valid, (int)m0, (int)m1, (int)m2, (int)m3,
+               (unsigned)st->minutes_key, (unsigned)st->minutes[0].n,
+               (int)st->minutes_ok, (unsigned long)st->today_fail);
+        AppState_Unlock();
+    }
 
     s_st_flush_n = 0;
     s_st_conv_us = s_st_conv_max = 0;

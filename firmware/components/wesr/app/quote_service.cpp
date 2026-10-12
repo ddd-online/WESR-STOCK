@@ -100,13 +100,12 @@ void Quote_NavSetPairing(bool on)
 }
 
 /* ---------- HTTP ---------- */
-/* 连接复用：按 host 缓存 esp_http_client 句柄。
-   之前每个请求都 init→open→close→cleanup，cleanup 会连 transport 一起销毁，
-   于是每轮 5 次全新 TCP+TLS 握手（实测每轮多花数秒、且在 BLE 常驻时更容易撞上内部堆不够）。
-   HTTP/1.1 默认持久连接，所以只要不销毁句柄、且上一次响应读完，就能复用同一条连接。
-   安全阀：响应被截断（total == cap-1）或没读完整时把该连接标记丢弃，下次重建，
-   避免"残留字节被当成下一次的响应头"。 */
-#define HTTP_CACHE_N 4
+/* 关于"连接复用"（踩过的坑，别照着旧版改回去）：
+   曾经按 host 缓存 esp_http_client 句柄做持久连接复用，结果**第二次之后拿到的都是第一次的
+   响应**（实测：sh603936/sz002436/sh605058/sh601595 四次都解析出 17.42，响应长度也都等于
+   第一只的 10391 字节；关掉复用后立即恢复成 17.42/35.37/54.90/27.21）。现象与"本次一个字节
+   都没读到、缓冲区里留着上次的内容"一模一样，所以在没查清 IDF 侧状态复位之前不再复用。
+   明文 HTTP 本来就没有握手可省，收益也小。 */
 
 /* 响应缓冲：实测快照 4.2KB、分时 10.9KB，且服务端都是 chunked 无 Content-Length。
    之前每个请求按 cap=32768 malloc、用完 free（实际只用 4~11KB），
@@ -123,134 +122,27 @@ static char *http_buf_get(void)
     return s_http_buf;
 }
 
-typedef struct {
-    char *key;                     /* "host:port"；NULL 表示空槽 */
-    esp_http_client_handle_t h;
-} http_slot_t;
-
-static http_slot_t s_http_slots[HTTP_CACHE_N];
-
-static void http_cache_drop(http_slot_t *s)
-{
-    if (s->h) {
-        esp_http_client_close(s->h);
-        esp_http_client_cleanup(s->h);
-        s->h = NULL;
-    }
-    free(s->key);          /* 句柄被借出时 h 为 NULL，但 key 还在：两件事要分开做 */
-    s->key = NULL;
-}
-
-static void http_cache_put(const char *key, esp_http_client_handle_t h)
-{
-    int free_i = -1;
-    for (int i = 0; i < HTTP_CACHE_N; i++) {
-        if (s_http_slots[i].key && strcmp(s_http_slots[i].key, key) == 0) {
-            http_cache_drop(&s_http_slots[i]);      /* 同 host 旧连接换掉 */
-            free_i = i;
-            break;
-        }
-        if (!s_http_slots[i].key && free_i < 0) free_i = i;
-    }
-    if (free_i < 0) {                               /* 满了：淘汰 0 号 */
-        http_cache_drop(&s_http_slots[0]);
-        free_i = 0;
-    }
-    s_http_slots[free_i].key = strdup(key);
-    s_http_slots[free_i].h = h;
-}
-
-static esp_http_client_handle_t http_cache_get(const char *key)
-{
-    for (int i = 0; i < HTTP_CACHE_N; i++) {
-        if (s_http_slots[i].key && strcmp(s_http_slots[i].key, key) == 0) {
-            esp_http_client_handle_t h = s_http_slots[i].h;
-            s_http_slots[i].h = NULL;               /* 借出：槽位留着 key 方便还回 */
-            return h;
-        }
-    }
-    return NULL;
-}
-
 /* verify=false 时不校验证书（spec §4.4 的降级策略：公开行情数据、无凭证） */
 static char *http_get_ex(const char *url, int *out_len, bool verify)
 {
-    /* 从 URL 里取 "host:port" 当复用键 */
-    char key[80];
-    {
-        const char *p = strstr(url, "://");
-        p = p ? p + 3 : url;
-        size_t n = 0;
-        while (p[n] && p[n] != '/' && n < sizeof key - 1) { key[n] = p[n]; n++; }
-        key[n] = 0;
-    }
+    esp_http_client_config_t ccfg;
+    memset(&ccfg, 0, sizeof ccfg);
+    ccfg.url = url;
+    ccfg.timeout_ms = 4000;
+    ccfg.buffer_size = 2048;             /* 默认 512：11KB 响应要读 22 轮 */
+    ccfg.buffer_size_tx = 512;
+    ccfg.disable_auto_redirect = true;   /* 3xx 不静默跟随（每次跟随都是白付一次握手） */
+    ccfg.user_agent = "Mozilla/5.0";
+    /* 走 HTTPS 时挂 crt_bundle；降级路径也必须挂 —— mbedTLS 4 下只设
+       skip_cert_common_name_check 会直接 "No server verification option set ... SSL_SETUP_FAILED"。 */
+    ccfg.crt_bundle_attach = esp_crt_bundle_attach;
+    if (!verify) ccfg.skip_cert_common_name_check = true;
 
-    /* 只有"已校验成功"的连接才复用；降级连接（不校验）不复用，免得把不安全会话留着 */
-    esp_http_client_handle_t c = verify ? http_cache_get(key) : NULL;
-    bool reuse = (c != NULL);
-
-    if (!c) {
-        esp_http_client_config_t ccfg;
-        memset(&ccfg, 0, sizeof ccfg);
-        ccfg.url = url;
-        ccfg.timeout_ms = 4000;
-        ccfg.buffer_size = 2048;       /* 默认 512：11KB 响应要读 22 轮 */
-        ccfg.buffer_size_tx = 512;
-        ccfg.disable_auto_redirect = true;   /* 3xx 不静默跟随（每次跟随都是白付一次握手） */
-        ccfg.keep_alive_enable = true;
-        ccfg.keep_alive_idle = 5;
-        ccfg.keep_alive_interval = 5;
-        ccfg.keep_alive_count = 3;
-        if (verify) {
-            ccfg.crt_bundle_attach = esp_crt_bundle_attach;
-        } else {
-            ccfg.skip_cert_common_name_check = true;   /* 降级：不校验 CN */
-            /* mbedTLS 4 下只设 skip_cert_common_name_check 不够：
-               "No server verification option set ... SSL_SETUP_FAILED"，降级必然失败。
-               这里补上 crt_bundle，让降级路径至少能建起会话。 */
-            ccfg.crt_bundle_attach = esp_crt_bundle_attach;
-        }
-        ccfg.user_agent = "Mozilla/5.0";
-        c = esp_http_client_init(&ccfg);
-        if (!c) return NULL;
-    }
+    esp_http_client_handle_t c = esp_http_client_init(&ccfg);
+    if (!c) return NULL;
 
     char *buf = NULL;
-    esp_err_t oe = ESP_FAIL;
-
-    /* 复用的连接可能已被服务端关掉（keep-alive 到期），失败就丢掉重建再试一次 */
-    for (int attempt = 0; attempt < 2; attempt++) {
-        oe = esp_http_client_open(c, 0);
-        if (oe == ESP_OK) break;
-        if (reuse) {
-            ESP_LOGI(TAG, "复用连接不可用(%d)，重建: %s", (int)oe, key);
-            esp_http_client_cleanup(c);
-            c = NULL;
-            reuse = false;
-            {
-                esp_http_client_config_t ccfg;
-                memset(&ccfg, 0, sizeof ccfg);
-                ccfg.url = url;
-                ccfg.timeout_ms = 4000;
-                ccfg.buffer_size = 2048;
-                ccfg.buffer_size_tx = 512;
-                ccfg.disable_auto_redirect = true;
-                ccfg.keep_alive_enable = true;
-                ccfg.keep_alive_idle = 5;
-                ccfg.keep_alive_interval = 5;
-                ccfg.keep_alive_count = 3;
-                if (verify) ccfg.crt_bundle_attach = esp_crt_bundle_attach;
-                else { ccfg.skip_cert_common_name_check = true; ccfg.crt_bundle_attach = esp_crt_bundle_attach; }
-                ccfg.user_agent = "Mozilla/5.0";
-                c = esp_http_client_init(&ccfg);
-                if (!c) return NULL;
-            }
-            continue;
-        }
-        break;
-    }
-
-    bool keep = false;
+    esp_err_t oe = esp_http_client_open(c, 0);
     if (oe == ESP_OK) {
         int len = esp_http_client_fetch_headers(c);
         int status = esp_http_client_get_status_code(c);
@@ -262,7 +154,7 @@ static char *http_get_ex(const char *url, int *out_len, bool verify)
                （fetch_headers 恒返回 -1）。所以不再按 len 每次 malloc，改用一块 16KB 常驻
                缓冲：消掉每轮 5 次 32KB 的 PSRAM 分配回收，也避免 PSRAM 碎片。 */
             const size_t cap = HTTP_BUF_SIZE;
-            size_t total = 0, used = 0;
+            size_t used = 0;
             uint32_t t_start = (uint32_t)(esp_timer_get_time() / 1000);
             bool truncated = false;
             for (;;) {
@@ -270,7 +162,6 @@ static char *http_get_ex(const char *url, int *out_len, bool verify)
                 int r = esp_http_client_read(c, buf + used, (int)(cap - 1 - used));
                 if (r > 0) {
                     used += (size_t)r;
-                    total = used;
                     continue;
                 }
                 /* r <= 0 并不等于"读完了"：socket 超时且已读到数据时 IDF 会返回已读字节数，
@@ -284,11 +175,10 @@ static char *http_get_ex(const char *url, int *out_len, bool verify)
                 }
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
-            (void)total;
             buf[used] = 0;
             bool complete = esp_http_client_is_complete_data_received(c);
-            ESP_LOGI(TAG, "http %d len=%d read=%u complete=%d trunc=%d reuse=%d",
-                     status, len, (unsigned)used, (int)complete, (int)truncated, (int)reuse);
+            ESP_LOGI(TAG, "http %d len=%d read=%u complete=%d trunc=%d",
+                     status, len, (unsigned)used, (int)complete, (int)truncated);
             if (used == 0) {
                 buf = NULL;
             } else if (out_len) {
@@ -296,7 +186,6 @@ static char *http_get_ex(const char *url, int *out_len, bool verify)
             } else if (len > 0 && (size_t)len != used) {
                 ESP_LOGW(TAG, "  Content-Length=%d 但只读到 %u 字节", len, (unsigned)used);
             }
-            keep = (status >= 200 && status < 300) && !truncated && complete;
         }
     } else {
         ESP_LOGW(TAG, "http open failed (%d, verify=%d): %s", (int)oe, (int)verify, url);
@@ -314,7 +203,7 @@ static char *http_get_ex(const char *url, int *out_len, bool verify)
                 hints.ai_family = AF_INET;
                 hints.ai_socktype = SOCK_STREAM;
                 struct addrinfo *res = NULL;
-                int g = getaddrinfo(h, "443", &hints, &res);
+                int g = getaddrinfo(h, "80", &hints, &res);
                 if (g == 0 && res) {
                     struct sockaddr_in *a = (struct sockaddr_in *)res->ai_addr;
                     ESP_LOGW(TAG, "  dns %s -> %s", h, inet_ntoa(a->sin_addr));
@@ -326,13 +215,8 @@ static char *http_get_ex(const char *url, int *out_len, bool verify)
         }
     }
 
-    if (keep) {
-        http_cache_put(key, c);
-    } else {
-        esp_http_client_close(c);
-        esp_http_client_cleanup(c);
-    }
-
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);
     return buf;
 }
 
@@ -388,6 +272,7 @@ static bool fetch_quotes(void)
     if (q[0].valid && q[0].stamp) {
         AppState_Status()->data_day = (uint32_t)(q[0].stamp / 1000000ULL);
     }
+    if (hits > 0) AppState_Status()->quotes_ok = true;
     AppState_Unlock();
     /* 缓冲是常驻的，不释放（见 http_buf_get） */
     ESP_LOGI(TAG, "quotes: %d/%d ok", hits, s_cfg->count);
@@ -416,6 +301,13 @@ static bool fetch_minute(const char *code, wesr_minute_t *out, wesr_quote_t *qou
         snprintf(url, sizeof url, kMinuteUrls[h], code);
         char *body = http_get(url, NULL);
         if (!body) continue;
+        /* 常驻校验：响应里必须出现本次请求的股票代码。
+           连接复用那版 bug 的表现就是"四次都拿回第一只的响应"，而解析器照样能解析成功、
+           只是数据是别人的 —— 这种串号靠肉眼看曲线很难发现，必须在这里点出来。 */
+        if (!strstr(body, code)) {
+            ESP_LOGE(TAG, "响应里没有 %s（数据串号？）host=%d，丢弃", code, h);
+            continue;
+        }
 
         bool ok = wesr_parse_minute_json(body, out);
         if (ok) {
@@ -425,6 +317,11 @@ static bool fetch_minute(const char *code, wesr_minute_t *out, wesr_quote_t *qou
                 if (closed) *closed = meta.closed;
                 if (day && out->valid) *day = out->day;
             }
+            ESP_LOGI(TAG, "  %s parsed: n=%u day=%lu last=%.2f prev=%.2f pct=%.2f",
+                     code, (unsigned)out->n, (unsigned long)out->day,
+                     (double)out->pts[out->n ? out->n - 1 : 0].price,
+                     qout ? (double)qout->prev_close : 0.0,
+                     qout ? (double)qout->chg_pct : 0.0);
             return true;     /* 缓冲常驻，不释放 */
         }
         ESP_LOGW(TAG, "分时解析失败(host %d)，试备用主机: %s", h, code);
@@ -484,23 +381,43 @@ void Quote_RefreshUi(void)
     Ui_UpdateHeader(st);          /* WiFi/蓝牙连接状态在顶栏用图标表达 */
     uint32_t day = st->data_day;
     bool closed = st->closed, offline = st->offline;
+    /* 页号取 UI 自己的状态，而不是 AppState_Status()->page ——
+       后者只在 publish_nav() 被调用时更新，任何"绕过按键直接进页"的路径
+       （开机直接设页、以后可能加的扫码跳页）都会让它和实际显示的页不一致。 */
+    uint8_t page_now = Ui_CurrentPage();
+    /* 本页该有的数据到底有没有：用于状态条区分"在显示旧数据"和"这页是空的"。
+       第 1 页是批量快照，第 2/3 页是分时（minutes_key 必须等于本页的归属键，
+       否则缓存里是上一组/上一只的分时 —— 那也是一种"页面看起来没刷新"）。 */
+    bool page_has_data = (page_now == 1)
+                       ? (st->quotes_ok && st->quotes[0].valid)
+                       : (st->minutes_ok && st->minutes[0].valid &&
+                          st->minutes_key == wesr_nav_minute_key(&s_nav));
     AppState_Unlock();
     Lvgl_unlock();
 
     char b[64];
+    bool pairing = false;
     AppState_Lock();
-    bool pairing = AppState_Status()->pairing;
+    pairing = AppState_Status()->pairing;
     AppState_Unlock();
     if (pairing) {
         Ui_StatusBar("配网模式 · 等待小程序", true);
-    } else if (closed) {
-        snprintf(b, sizeof b, "休市 · 显示 %02u-%02u 收盘数据",
-                 (unsigned)((day / 100) % 100), (unsigned)(day % 100));
-        Ui_StatusBar(b, false);
-    } else if (offline) {
-        Ui_StatusBar("未联网 · 显示最后数据", true);
     } else if (!s_cfg->ssid[0]) {
         Ui_StatusBar("未配网 · 长按 KEY 用小程序配网", true);
+    } else if (offline) {
+        Ui_StatusBar("未联网 · 显示最后数据", true);
+    } else if (!page_has_data) {
+        /* 数据还没到手，或本页归属不对：明确说出来，别让人对着空白页猜 */
+        snprintf(b, sizeof b, "第%u页 · 数据拉取中", (unsigned)page_now);
+        Ui_StatusBar(b, true);
+    } else if (closed) {
+        /* 休市或"手上这份是上一交易日的"：把"哪一页 + 哪天的数据"一起说清楚，
+           这样切页时能一眼看出"这页显示的是不是我要的那天"。
+           注意字数：font_cn12 是 12px 等宽，状态条宽 400px ⇒ 最多约 15 个汉字，
+           别为了说全把字挤到越界（顶栏 15px 行高也会贴边裁掉一列像素）。 */
+        snprintf(b, sizeof b, "第%u页 · %02u-%02u 收盘",
+                 (unsigned)page_now, (unsigned)((day / 100) % 100), (unsigned)(day % 100));
+        Ui_StatusBar(b, false);
     } else {
         Ui_StatusBar("", false);
     }
@@ -586,6 +503,9 @@ void Quote_Run(wesr_app_cfg_t *cfg)
         if (page != last_page || group != last_group || idx != last_idx ||
             cfg_gen != last_cfg_gen) {
             wesr_sched_page(&sched, page);
+            /* 切页要立刻重画 + 重估状态条：否则最多要等 200ms 才轮到下面的 need 判定，
+               用户看到的是"切过去了但状态条还是上一页的"。 */
+            Quote_RefreshUi();
             last_page = page; last_group = group; last_idx = idx; last_cfg_gen = cfg_gen;
         }
         /* 跨进一个新的交易时段（早上开盘、下午开盘）：缓存里还挂着上一交易日的收盘数据，

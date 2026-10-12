@@ -38,6 +38,7 @@ typedef struct {
     /* 行情缓存（quote_service 写，UI 读） */
     wesr_quote_t  quotes[WESR_MAX_STOCKS];
     uint8_t       quotes_n;
+    bool          quotes_ok;       /* 第 1 页：快照有没有拉到过（分页状态条要用） */
     wesr_minute_t minutes[4];      /* 当前组的四只 */
     uint8_t       minutes_key;     /* minutes[0] 是哪只股票（第 2 页=组起始，第 3 页=idx）*/
     bool          minutes_ok;
